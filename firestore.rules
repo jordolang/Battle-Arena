@@ -1,0 +1,117 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: teams
+    // Fields:
+    //   - name: string (required)
+    //   - goal: number (required)
+    //   - currentAmount: number (required)
+    //   - hp: number (required)
+    //   - colorScheme: string
+    //   - badgeIcon: string
+    //   - activityType: string
+    //   - shieldActiveUntil: timestamp
+    //   - lastShareUserId: string
+    //   - consecutiveSharesCount: number
+    //   - schoolName: string
+    //
+    // Collection: shares
+    // Fields:
+    //   - teamId: string (required)
+    //   - userId: string (required)
+    //   - timestamp: timestamp (required)
+    //   - platform: string
+    //
+    // Collection: purchases
+    // Fields:
+    //   - teamId: string (required)
+    //   - amount: number (required)
+    //   - timestamp: timestamp (required)
+    //
+    // Collection: config
+    // Fields:
+    //   - gameActive: bool
+    //   - lastUpdate: timestamp
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && 
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+         (request.auth.token.email == "mike@josemadridsalsa.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidTeam(data) {
+      return data.name is string && data.name.size() > 0 && data.name.size() < 100 &&
+             data.goal is number && data.goal > 0 &&
+             data.hp is number &&
+             data.currentAmount is number;
+    }
+
+    function isValidShare(data) {
+      return data.teamId is string &&
+             data.userId == request.auth.uid &&
+             data.timestamp is timestamp;
+    }
+
+    function isValidPurchase(data) {
+      return data.teamId is string &&
+             data.amount is number && data.amount > 0 &&
+             data.timestamp is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow write: if isAdmin();
+    }
+
+    match /teams/{teamId} {
+      allow read: if true; // Publicly viewable for the game
+      allow create: if isAdmin();
+      allow update: if isAuthenticated() || isAdmin(); // Users can update via game logic (shares/purchases)
+    }
+
+    match /shares/{shareId} {
+      allow read: if true;
+      allow create: if isAuthenticated() && isValidShare(request.resource.data);
+      allow update, delete: if isAdmin();
+    }
+
+    match /purchases/{purchaseId} {
+      allow read: if true;
+      allow create: if isAdmin(); // Purchases usually come from a backend/admin trigger
+      allow update, delete: if isAdmin();
+    }
+
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /messages/{messageId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() 
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.text is string 
+        && request.resource.data.text.size() > 0 
+        && request.resource.data.text.size() < 500;
+      allow delete: if isAdmin();
+    }
+  }
+}

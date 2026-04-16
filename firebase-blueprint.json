@@ -1,0 +1,75 @@
+{
+  "entities": {
+    "Team": {
+      "title": "Team",
+      "description": "A fundraising team participating in the battle arena.",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the team" },
+        "goal": { "type": "number", "description": "Fundraising goal and max HP" },
+        "currentAmount": { "type": "number", "description": "Total amount raised" },
+        "hp": { "type": "number", "description": "Current HP in the battle" },
+        "colorScheme": { "type": "string", "description": "Primary color for the team" },
+        "badgeIcon": { "type": "string", "description": "Lucide icon name for the team badge" },
+        "activityType": { "type": "string", "description": "Type of activity (e.g., Soccer, Choir)" },
+        "shieldActiveUntil": { "type": "string", "format": "date-time", "description": "Timestamp when the shield expires" },
+        "lastShareUserId": { "type": "string", "description": "UID of the last user who shared for this team" },
+        "consecutiveSharesCount": { "type": "number", "description": "Number of consecutive shares by the same user" },
+        "schoolName": { "type": "string", "description": "Name of the school" }
+      },
+      "required": ["name", "goal", "hp", "currentAmount"]
+    },
+    "Share": {
+      "title": "Share",
+      "description": "A social share event that activates a shield.",
+      "type": "object",
+      "properties": {
+        "teamId": { "type": "string", "description": "ID of the team shared" },
+        "userId": { "type": "string", "description": "UID of the user who shared" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the share occurred" },
+        "platform": { "type": "string", "description": "Social platform used" }
+      },
+      "required": ["teamId", "userId", "timestamp"]
+    },
+    "Purchase": {
+      "title": "Purchase",
+      "description": "A purchase event that deals damage to opposing teams.",
+      "type": "object",
+      "properties": {
+        "teamId": { "type": "string", "description": "ID of the team that received the purchase" },
+        "amount": { "type": "number", "description": "Amount of the purchase" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the purchase occurred" }
+      },
+      "required": ["teamId", "amount", "timestamp"]
+    },
+    "GlobalConfig": {
+      "title": "GlobalConfig",
+      "description": "Global settings for the fundraising game.",
+      "type": "object",
+      "properties": {
+        "gameActive": { "type": "boolean", "description": "Whether the game is currently running" },
+        "lastUpdate": { "type": "string", "format": "date-time", "description": "Last time the game state was updated" }
+      }
+    },
+    "Message": {
+      "title": "Message",
+      "description": "A chat message sent by a user to their team.",
+      "type": "object",
+      "properties": {
+        "teamId": { "type": "string", "description": "ID of the team this message belongs to" },
+        "userId": { "type": "string", "description": "UID of the sender" },
+        "userName": { "type": "string", "description": "Display name of the sender" },
+        "text": { "type": "string", "description": "Content of the message" },
+        "timestamp": { "type": "string", "format": "date-time", "description": "When the message was sent" }
+      },
+      "required": ["teamId", "userId", "userName", "text", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/teams/{teamId}": { "schema": "Team", "description": "Collection of fundraising teams" },
+    "/shares/{shareId}": { "schema": "Share", "description": "History of social shares" },
+    "/purchases/{purchaseId}": { "schema": "Purchase", "description": "History of purchases" },
+    "/config/{configId}": { "schema": "GlobalConfig", "description": "Global game configuration" },
+    "/messages/{messageId}": { "schema": "Message", "description": "Team-specific chat messages" }
+  }
+}
