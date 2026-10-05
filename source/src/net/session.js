@@ -11,7 +11,7 @@ import { Projectile } from '../specials.js';
 import { events } from '../events.js';
 import { createTransport, TransportError } from './transport.js';
 
-export const PROTOCOL = 2;
+export const PROTOCOL = 3;
 export const MAX_PLAYERS = 8;
 export const ONLINE_COLORS = ['#ff6b3d', '#3db8ff', '#7dff6b', '#ffd23d', '#ff6bd5', '#b38bff', '#4ff0d8', '#f2f2f2'];
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -371,6 +371,7 @@ export class NetSession {
         r2(f.moveAmount), r2(f.runPhase), r2(Math.max(0, f.invuln)), f.stats.wins, f.stats.kos, Math.round(f.stats.damage),
         Math.round(f.stamina), r2(f.cooldowns[0]), r2(f.cooldowns[1]), Math.round(f.shield), f.skillId ? SKILL_IDS.indexOf(f.skillId) : -1,
         (f.armor > 0 || f.power > 0 || f.lifesteal > 0 ? 1 : 0) | (f.vanish > 0 ? 2 : 0) | (f.exhausted ? 4 : 0) | (f.haste > 0 ? 8 : 0) | (f.slow > 0 ? 16 : 0) | (f.sprinting ? 32 : 0),
+        r2(f.cooldowns[2]),
       ]),
       p: g.projectiles.filter((p) => !p.dead).map((p) => [p.id, PROJ_KINDS.indexOf(p.kind), r2(p.pos.x), r2(p.pos.y), r2(p.pos.z), r2(p.dir.x), r2(p.dir.z), p.owner.slot]),
     };
@@ -546,7 +547,7 @@ export class NetSession {
       f.invuln = fa[16];
       f.stats.wins = fa[17]; f.stats.kos = fa[18]; f.stats.damage = fa[19];
       f.stamina = lerp(num(fa[20], 100), num(fb[20], 100), t);
-      f.cooldowns[0] = num(fa[21]); f.cooldowns[1] = num(fa[22]);
+      f.cooldowns[0] = num(fa[21]); f.cooldowns[1] = num(fa[22]); f.cooldowns[2] = num(fa[26]);
       f.shield = num(fa[23]);
       f.skillId = SKILL_IDS[fa[24]] || null;
       f.skill = f.skillId ? SKILLS[f.skillId] : null;

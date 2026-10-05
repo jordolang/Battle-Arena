@@ -48,7 +48,7 @@ export class Hud {
         return `<span class="chip" title="${esc(label)}"><b>${esc(key)}</b>${esc(label.split(' ')[0])}<i class="cd"></i></span>`;
       };
       const chips = f.isPlayer || f.isYou
-        ? `<div class="chips">${f.skillIds.map((id, i) => chipFor(i ? 'skill2' : 'skill1', SKILLS[id].label)).join('')}${chipFor('special', SPECIALS[f.def.special].label)}</div>`
+        ? `<div class="chips">${f.skillIds.map((id, i) => chipFor('skill' + (i + 1), SKILLS[id].label)).join('')}${chipFor('special', SPECIALS[f.def.special].label)}</div>`
         : '';
       card.innerHTML = `
         <div class="card-top">
@@ -85,19 +85,19 @@ export class Hud {
 
   static controlHint(index, b) {
     const k = (a) => `<kbd>${esc(keyLabel(b[a]))}</kbd>`;
-    return `<b style="color:${PLAYER_COLORS[index]}">P${index + 1}</b> ${k('up')}${k('left')}${k('down')}${k('right')} move · ${k('punch')} punch · ${k('kick')} kick · ${k('block')} block · ${k('jump')} jump · ${k('dash')} dodge, hold to sprint · ${k('skill1')}${k('skill2')} skills · ${k('special')} special`;
+    return `<b style="color:${PLAYER_COLORS[index]}">P${index + 1}</b> ${k('up')}${k('left')}${k('down')}${k('right')} move · ${k('punch')} punch · ${k('kick')} kick · ${k('block')} block · ${k('jump')} jump · ${k('dash')} dodge, hold to sprint · ${k('skill1')}${k('skill2')}${k('skill3')} skills · ${k('special')} special`;
   }
 
   static onlineHint(b) {
     const k = (a) => `<kbd>${esc(keyLabel(b[0][a]))}</kbd>`;
-    return `<b>You</b> ${k('up')}${k('left')}${k('down')}${k('right')} or arrows move · ${k('punch')} punch · ${k('kick')} kick · ${k('block')} block · ${k('jump')} jump · ${k('dash')} dodge, hold to sprint · ${k('skill1')}${k('skill2')} skills · ${k('special')} special`;
+    return `<b>You</b> ${k('up')}${k('left')}${k('down')}${k('right')} or arrows move · ${k('punch')} punch · ${k('kick')} kick · ${k('block')} block · ${k('jump')} jump · ${k('dash')} dodge, hold to sprint · ${k('skill1')}${k('skill2')}${k('skill3')} skills · ${k('special')} special`;
   }
 
-  // "P1 Ember: Q Flame Burst · E Phoenix Rise · R Hellfire Orb"
+  // "P1 Ember (Mage): = Meteor · - Flame Lance · 0 Ember Spray · I Hellfire Orb"
   static skillHint(f, b, who) {
     const k = (a) => `<kbd>${esc(keyLabel(b[a]))}</kbd>`;
     const color = f.labelColor ? ` style="color:${f.labelColor}"` : '';
-    return `<b${color}>${esc(who)}</b> ${esc(f.def.name)}: ${f.skillIds.map((id, i) => `${k(i ? 'skill2' : 'skill1')} ${esc(SKILLS[id].label)}`).join(' · ')} · ${k('special')} ${esc(SPECIALS[f.def.special].label)}`;
+    return `<b${color}>${esc(who)}</b> ${esc(f.def.name)}${f.def.role ? ` (${esc(f.def.role)})` : ''}: ${f.skillIds.map((id, i) => `${k('skill' + (i + 1))} ${esc(SKILLS[id].label)}`).join(' · ')} · ${k('special')} ${esc(SPECIALS[f.def.special].label)}`;
   }
 
   announce(text, cls = '', ms = 1400) {
@@ -160,9 +160,9 @@ export class Hud {
       const sh = Math.min(1, (f.shield || 0) / f.maxHp);
       if (sh !== it.lastSh) { it.shield.style.transform = `scaleX(${sh})`; it.lastSh = sh; }
       it.chips.forEach((c, i) => {
-        // two skills, then the special
+        // three skills, then the special
         let frac = 0, off = false;
-        if (i < 2) {
+        if (i < f.skillIds.length) {
           const sk = SKILLS[f.skillIds[i]];
           frac = sk ? Math.min(1, (f.cooldowns?.[i] || 0) / sk.cooldown) : 0;
           off = !sk || f.energy < sk.cost;

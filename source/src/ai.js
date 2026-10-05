@@ -206,12 +206,14 @@ export class AIController {
     }
   }
 
-  // Pick one of this fighter's two skills when the situation suits it. Returns true if cast.
+  // Pick one of this fighter's three skills when the situation suits it. Returns true if cast.
   trySkill(me, T, dist, nx, nz, world) {
     let near = 0;
     for (const o of world.fighters) if (o !== me && o.alive && !allies(me, o) && Math.hypot(o.pos.x - me.pos.x, o.pos.z - me.pos.z) < 3.6) near++;
     const hurt = me.hp / me.maxHp;
-    for (let i = 0; i < 2; i++) {
+    const start = Math.floor(Math.random() * 3);
+    for (let k = 0; k < me.skillIds.length; k++) {
+      const i = (start + k) % me.skillIds.length;
       const sk = SKILLS[me.skillIds[i]];
       if (!sk || me.cooldowns[i] > 0 || me.energy < sk.cost) continue;
       let ok = false;
@@ -220,6 +222,8 @@ export class AIController {
         case 'nova': ok = near >= 2 || (near >= 1 && dist < sk.radius * 0.8); break;
         case 'wave': ok = dist < sk.length * 0.85; break;
         case 'leap': ok = dist > 3 && dist < sk.range; break;
+        case 'beam': ok = dist > 2 && dist < sk.length * 0.9 && !this.lineBlocked(me, T, world); break;
+        case 'smite': ok = dist > 2.5 && dist < sk.range * 0.95; break;
         case 'heal': ok = hurt < 0.55 && me.healLeft <= 0; break;
         case 'shield': ok = near >= 1 && me.shield <= 0; break;
         case 'buff':
@@ -229,11 +233,11 @@ export class AIController {
           break;
       }
       if (!ok) continue;
-      if (sk.type === 'bolt' || sk.type === 'wave' || sk.type === 'leap') {
+      if (sk.type === 'bolt' || sk.type === 'wave' || sk.type === 'leap' || sk.type === 'beam') {
         this.wantMove = { x: nx * 0.01, z: nz * 0.01 };
         me.facing = Math.atan2(nx, nz) + (Math.random() - 0.5) * (1 - this.p.accuracy) * 0.6;
       }
-      this.press(i === 0 ? 'skill1' : 'skill2', 0);
+      this.press('skill' + (i + 1), 0);
       return true;
     }
     return false;

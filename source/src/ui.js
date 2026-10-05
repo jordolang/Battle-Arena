@@ -6,9 +6,9 @@ import { saveBindings } from './input.js';
 const SETUP_KEY = 'battle-arena.setup.v1';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const hex = (n) => '#' + n.toString(16).padStart(6, '0');
-// "Hellfire Orb · Flame Burst · Phoenix Rise"
+// "Mage · Hellfire Orb · Meteor · Flame Lance · Ember Spray"
 export function moveSummary(def) {
-  return [SPECIALS[def.special].label, ...(def.skills || []).map((id) => SKILLS[id].label)].join(' · ');
+  return [def.role, SPECIALS[def.special].label, ...(def.skills || []).map((id) => SKILLS[id].label)].filter(Boolean).join(' · ');
 }
 
 export function defaultSetup() {

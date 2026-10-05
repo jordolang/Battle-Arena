@@ -224,11 +224,12 @@ export function executeSpecial(f, world) {
 }
 
 
-// Skills (two per fighter, see SKILLS in config.js).
+// Skills (three per fighter, see SKILLS in config.js).
 function skillHit(sk, pow, dx, dz, extra = {}) {
   return {
     damage: sk.damage * pow, knock: sk.knock ?? 4, hitstun: 0.45, heavy: sk.damage >= 10, knockdown: !!sk.knockdown,
-    stun: sk.stun, slow: sk.slow, poison: sk.poison || sk.burn, poisonColor: sk.burn ? 0xff7a1c : undefined, drain: sk.drain,
+    stun: sk.stun, slow: sk.slow, freeze: sk.freeze, unblockable: !!sk.unblockable, drain: sk.drain,
+    poison: sk.poison || sk.burn || sk.bleed, poisonColor: sk.burn ? 0xff7a1c : sk.bleed ? 0xff2a2a : undefined,
     dx, dz, kind: 'skill', color: sk.color, ...extra,
   };
 }
@@ -259,7 +260,7 @@ export function executeSkill(f, id, world) {
       world.effects.ring(f.pos.x, 0.6, f.pos.z, sk.color, sk.radius);
       world.effects.sparks(f.pos.x, 1.0, f.pos.z, sk.color, 30, 7);
       world.shake(0.2);
-      hitAll(f, world, sk.radius, (o, d, nx, nz) => o.receiveHit(f, skillHit(sk, pow, nx, nz, { unblockable: d < 1.4 }), world));
+      hitAll(f, world, sk.radius, (o, d, nx, nz) => o.receiveHit(f, skillHit(sk, pow, nx, nz, { unblockable: !!sk.unblockable || d < 1.4 }), world));
       break;
     }
     case 'wave': {
@@ -289,6 +290,54 @@ export function executeSkill(f, id, world) {
         const d = Math.max(0.01, Math.hypot(target.pos.x - f.pos.x, target.pos.z - f.pos.z));
         target.receiveHit(f, skillHit(sk, pow, (target.pos.x - f.pos.x) / d, (target.pos.z - f.pos.z) / d), world);
       }
+      break;
+    }
+    case 'beam': {
+      // instant line from the hands, stopped by walls and pillars, piercing every foe on it
+      let len = sk.length;
+      for (let d = 0.5; d <= sk.length; d += 0.5) {
+        if (world.arena.blocksProjectile(f.pos.x + fw.x * d, f.pos.z + fw.z * d)) { len = d; break; }
+      }
+      const sx = f.pos.x + fw.x * 0.6, sz = f.pos.z + fw.z * 0.6;
+      const ex = f.pos.x + fw.x * len, ez = f.pos.z + fw.z * len;
+      world.effects.streak(sx, sz, ex, ez, sk.color);
+      world.effects.streak(sx, sz, ex, ez, sk.color);
+      world.effects.sparks(ex, 1.2, ez, sk.color, 18, 5);
+      for (const o of world.fighters) {
+        if (o === f || !o.alive || allies(f, o) || o.vanish > 0) continue;
+        const wx = o.pos.x - f.pos.x, wz = o.pos.z - f.pos.z;
+        const t = wx * fw.x + wz * fw.z;
+        if (t < 0 || t > len + o.radius) continue;
+        if (Math.abs(wx * fw.z - wz * fw.x) > sk.width + o.radius) continue;
+        o.receiveHit(f, skillHit(sk, pow, fw.x, fw.z), world);
+      }
+      break;
+    }
+    case 'smite': {
+      // mark the nearest foe's spot, then strike it: dodge out of the circle in time to avoid it
+      const target = f.findTarget(world, sk.range, Math.PI);
+      const tx = target ? target.pos.x : f.pos.x + fw.x * 6;
+      const tz = target ? target.pos.z : f.pos.z + fw.z * 6;
+      const marker = world.effects.telegraph(tx, tz, sk.radius, sk.color, sk.delay);
+      world.delayed.push({
+        at: world.time + sk.delay,
+        run: (w) => {
+          marker.done = true;
+          if (sk.fx === 'lightning') w.effects.lightning(tx, tz);
+          w.effects.ring(tx, 0.1, tz, sk.color, sk.radius * 1.3, 0.4);
+          w.effects.sparks(tx, sk.fx === 'meteor' ? 2.5 : 0.8, tz, sk.color, 40, 9);
+          if (sk.fx === 'meteor') w.effects.dust(tx, tz, 3);
+          w.shake(0.35);
+          for (const o of w.fighters) {
+            if (o === f || !o.alive || allies(f, o) || o.vanish > 0) continue;
+            const dx = o.pos.x - tx, dz = o.pos.z - tz, d = Math.hypot(dx, dz);
+            if (d < sk.radius + o.radius) {
+              const n = d > 1e-3 ? 1 / d : 0;
+              o.receiveHit(f, skillHit(sk, pow, dx * n || 1, dz * n), w);
+            }
+          }
+        },
+      });
       break;
     }
     case 'heal':

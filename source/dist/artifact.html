@@ -1,9 +1,3 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<link rel="icon" href="data:,">
 <title>Jose Madrid Salsa Presents: Battle for the Salsa King</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -339,8 +333,6 @@ button { font: inherit; color: inherit; }
 .intro-skip { position: absolute; bottom: 18px; left: 0; right: 0; text-align: center; color: var(--ash); font-size: 14px; letter-spacing: 0.2em; text-transform: uppercase; opacity: 0.6; }
 
 </style>
-</head>
-<body>
 
 <div id="app">
   <div id="stage"></div>
@@ -4474,5 +4466,3 @@ uniform float time; uniform float excite;`).replace("#include <begin_vertex>",`#
     <div class="intro-skip">Press any key to skip</div>`,document.getElementById("app").appendChild(t);let e=[...t.querySelectorAll(".intro-card")],i=[0,3200,6400],n=9600,r=i.map((c,u)=>setTimeout(()=>{e.forEach((d,p)=>d.classList.toggle("on",p===u))},c+50)),a=!1,o=()=>{a||(a=!0,r.forEach(clearTimeout),clearTimeout(l),window.removeEventListener("keydown",h,!0),t.classList.add("out"),setTimeout(()=>t.remove(),700),s?.())},h=c=>{c.preventDefault(),c.stopImmediatePropagation(),o()};window.addEventListener("keydown",h,!0),t.addEventListener("pointerdown",o);let l=setTimeout(o,n)}function Fg(){let s=new oa,t=iu(),e=null,i=new URLSearchParams(location.search),n=new pl({stage:document.getElementById("stage"),hudRoot:document.getElementById("hud"),keyboard:s,quality:i.get("quality")||"auto"}),r=Ep(Le),a=null,o=null,h=new fl({keyboard:s,bindings:t,onStart:p=>{e=p,r.unlock(),h.hideAll(),n.setPaused(!1),n.startMatch(p,t)},onResume:()=>{h.hideAll(),n.setPaused(!1)},onRestart:()=>{h.hideAll(),n.setPaused(!1);for(let p of n.fighters)p.stats={kos:0,damage:0,wins:0};n.startMatch(e,t)},onQuit:()=>{n.setPaused(!1),n.keyboard.captureGameKeys=!1,n.startDemo(),h.show("title")},onQualityChange:p=>Bp(n,p),onAct:(p,f)=>{r.unlock(),a?.onAct(p,f)},onOpt:(p,f,g)=>a?.onOpt(p,f,g),onShow:p=>a?.onShow(p)});o=new xl({game:n,menus:h,keyboard:s,bindings:t}),a=new bl({menus:h,session:o}),window.addEventListener("pagehide",()=>o.leave(null,!0)),n.onMatchEnd=(p,f)=>{setTimeout(()=>{n.phase==="matchOver"&&(n.keyboard.captureGameKeys=!1,n.hud.show(!1),h.showResults(p,f))},2600)},s.onKey(p=>n.mode!=="match"||h.active?!1:p.code==="Escape"||p.code==="KeyP"?n.phase==="matchOver"?!1:n.online?(h.show("netpause"),!0):(n.setPaused(!0),h.show("pause"),!0):!1),document.addEventListener("visibilitychange",()=>{document.hidden&&n.mode==="match"&&!n.online&&!h.active&&n.phase!=="matchOver"&&(n.setPaused(!0),h.show("pause"))});let l=Bg(h);l&&Bp(n,l),n.startDemo();for(let p of document.querySelectorAll(".sponsor-mark"))p.innerHTML=Sl(p.closest(".presented-by")?34:64);h.show("title"),document.getElementById("boot").hidden=!0,!i.has("autotest")&&!i.has("room")&&!i.has("nointro")&&(h.hideAll(),Fp(()=>h.show("title")));let c=Kr(i.get("room"));c&&(h.show("online"),document.getElementById("net-code").value=c);let u=document.getElementById("focus-note"),d=()=>{u.hidden=document.hasFocus()};if(window.addEventListener("focus",d),window.addEventListener("blur",d),window.addEventListener("pointerdown",()=>{window.focus(),setTimeout(d,0)}),setTimeout(d,300),window.__arena={game:n,menus:h,events:Le,bindings:t,session:o},i.has("autotest")){let p=Math.max(2,Math.min(8,+i.get("autotest")||8));h.setup.count=p,h.setup.slots.forEach(f=>{f.control="cpu"}),h.setup.winsNeeded=+i.get("wins")||1,h.setup.suddenDeath=+i.get("sd")||30,h.runAct("start")}}function Bg(s){return s.setup.quality!=="auto"?s.setup.quality:null}function Bp(s,t){s.quality=t,s.maxPixelRatio=t==="low"?1:t==="high"?2:1.6,s.pixelRatio=Math.min(window.devicePixelRatio||1,s.maxPixelRatio),t==="low"&&(s.pixelRatio=Math.min(s.pixelRatio,.85)),s.renderer.setPixelRatio(s.pixelRatio);let e=t!=="low";s.renderer.shadowMap.enabled=e,s.arena.moon.castShadow=e,s.scene.traverse(i=>{i.material&&!Array.isArray(i.material)&&(i.material.needsUpdate=!0)}),s.resize()}try{Fg()}catch(s){console.error(s);let t=document.getElementById("fatal");t&&(t.hidden=!1,t.querySelector("p").textContent="This browser could not start WebGL: "+(s?.message||s))}
 
 </script>
-</body>
-</html>

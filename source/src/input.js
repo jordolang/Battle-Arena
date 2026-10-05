@@ -2,7 +2,8 @@
 // fixed-step simulation never misses a tap that happened between ticks.
 import { ACTIONS, DEFAULT_BINDINGS } from './config.js';
 
-const STORAGE_KEY = 'battle-arena.bindings.v1';
+// v2: new default layout (J K I H attacks, = - 0 skills), so older saved keys are not carried over
+const STORAGE_KEY = 'battle-arena.bindings.v2';
 
 export class Keyboard {
   constructor() {
@@ -96,6 +97,7 @@ export class HumanController {
       dashHeld: kb.isDown(b.dash),
       skill1: this.edge('skill1'),
       skill2: this.edge('skill2'),
+      skill3: this.edge('skill3'),
     };
   }
 }
@@ -122,7 +124,7 @@ export class OnlineKeyboardController {
 
 // Host side of a remote player: replays the latest input that arrived over the network.
 // Taps travel as running totals, so a lost or reordered packet never drops a punch.
-export const NET_TAPS = ['punch', 'kick', 'special', 'jump', 'dash', 'skill1', 'skill2'];
+export const NET_TAPS = ['punch', 'kick', 'special', 'jump', 'dash', 'skill1', 'skill2', 'skill3'];
 export class NetController {
   constructor(playerIndex) {
     this.isHuman = true;

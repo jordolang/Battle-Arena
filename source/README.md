@@ -6,7 +6,7 @@ Sponsored by Jose Madrid Salsa (josemadridsalsa.com). Every load opens with a sp
 
 
 A 3D last-one-standing brawler in Three.js. 2 to 8 fighters, up to four people on one keyboard, CPU fighters fill the rest.
-Play free-for-all or in 2 to 4 named teams. Every fighter has stamina, two castable skills and a special move.
+Play free-for-all or in 2 to 4 named teams. Every fighter has stamina, three castable skills matched to their class (Warrior, Ranged or Mage) and a special move.
 
 ## Play
 - **Easiest:** open `dist/battle-arena.html` in Chrome, Edge, Firefox or Safari. It is one self-contained file.
@@ -33,13 +33,14 @@ Effects, announcer lines, the kill feed and every gameplay event are replayed on
 of one browser and no network, or `?peerserver=host:port` to use your own PeerJS server.
 
 ## Controls (rebindable in the Controls screen, saved in the browser)
-| | Move | Punch | Kick | Block | Special | Jump | Dodge / sprint | Skill 1 | Skill 2 |
-|---|---|---|---|---|---|---|---|---|---|
-| P1 | W A S D | F | G | H | R | Space | Left Shift | Q | E |
-| P2 | Arrows | K | L | ; | O | Enter | Right Shift | . | / |
-| P3 | Numpad 8 4 5 6 | Num 1 | Num 2 | Num 3 | Num 7 | Num 0 | Num . | Num 9 | Num + |
-| P4 | Y B N M | U | I | J | 7 | 8 | V | 6 | 9 |
+| | Move | Punch | Kick | Block | Special | Jump | Dodge / sprint | Skill 1 | Skill 2 | Skill 3 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| P1 | W A S D | J | K | H | I | Space | Left Shift | = | - | 0 |
+| P2 | Arrows | . | / | ; | ' | Enter | Right Shift | ] | [ | \\ |
+| P3 | Numpad 8 4 5 6 | Num 1 | Num 2 | Num 3 | Num 7 | Num 0 | Num . | Num 9 | Num + | Num - |
+| P4 | Y B N M | U | O | L | 7 | 8 | V | 6 | 9 | 5 |
 
+P1's left hand moves and the right hand fights. Keys saved before this layout are reset to these defaults once.
 Esc or P pauses. Menus: arrows/WASD, Enter, Esc. When every keyboard player is out, hold X to fast-forward.
 
 Combos: punch ×3 (ends in a hook), punch-punch-kick, kick-kick (knockdown roundhouse), jump then kick (dive kick).
@@ -50,24 +51,27 @@ Sudden death (default 75 s) brings in a closing ring of fire.
 - **Stamina** (green bar): attacks, jumps, blocked hits, dodges and sprinting drain it; it refills after a short pause.
   At zero you are exhausted (slower, 28% weaker, no dodge or sprint, guard breaks faster) until it is back to 35.
 - **Dodge / sprint**: tap to roll (brief invulnerability) in the held direction, or backwards; hold while moving to sprint.
-- **Skills**: two per fighter, paid from the mana bar (which now also refills a little faster) and then on cooldown.
+- **Skills**: three per fighter, each unique and themed by class: Warriors strike up close, Ranged fighters shoot,
+  Mages cast spells from a distance. Each is paid from the mana bar and then goes on cooldown.
   The chips under a player's card show each one; a dark fill is the cooldown, dim means not enough mana.
 - **Teams**: set *Teams* to 2, 3 or 4 in the rules, name the teams, and pick each slot's team. Fighters wear their
   team's colours (dyed gi, pauldrons, tabard, floor ring). Teammates cannot hurt or target each other, and the last
   team with anyone standing wins the round. Online, the host sets the team count and names and each player picks a team;
   CPUs fill the smallest team.
 
-## Roster (special · skill 1 · skill 2)
-| Fighter | Special | Skill 1 | Skill 2 |
-|---|---|---|---|
-| Ember | Hellfire Orb | Flame Burst (fire nova, burns) | Phoenix Rise (heal over time) |
-| Frost | Glacial Breath | Ice Shards (3 slowing shards) | Frost Armor (35 damage barrier) |
-| Titan | Quake Slam | Boulder Toss (knockdown rock) | War Cry (refill stamina, +30% damage) |
-| Viper | Venom Rush | Venom Spit (poison glob) | Serpent Haste (speed, double stamina regen) |
-| Volt | Storm Call | Spark Bolt (stuns) | Static Field (stun nova) |
-| Shade | Shadow Step | Void Bolt (steals health) | Vanish (unseen and untouchable) |
-| Kane | Chain Spear | Blood Rush (lunge strike) | Bloodlust (hits heal you) |
-| Onyx | Iron Will | Shatter Wave (knockdown cone) | Fortify (45 damage barrier) |
+## Roster (class · special · skills 1 to 3)
+| Fighter | Class | Special | Skill 1 | Skill 2 | Skill 3 |
+|---|---|---|---|---|---|
+| Titan | Warrior | Quake Slam | Mountain Fist (huge launching punch) | Tremor Stomp (stun burst) | Avalanche Charge (knockdown rush) |
+| Onyx | Warrior | Iron Will | Shatter Strike (knockdown floor smash) | Guard Crusher (unblockable blow) | Iron Cyclone (spin hits all around) |
+| Kane | Warrior | Chain Spear | Blood Rush (lunge, heals you) | Reaver Slash (slash, heals you) | Crimson Whirl (spin, bleeds) |
+| Viper | Ranged | Venom Rush | Venom Spit (poison glob) | Fang Volley (5 poison darts) | Piercing Fang (passes through a line) |
+| Shade | Ranged | Shadow Step | Shadow Kunai (3 fast knives) | Soul Dagger (steals health) | Phantom Lance (piercing, stuns) |
+| Ember | Mage | Hellfire Orb | Meteor (marked strike on a distant foe, burns) | Flame Lance (burning ray) | Ember Spray (3 burning embers) |
+| Frost | Mage | Glacial Breath | Ice Shards (3 slowing shards) | Glacial Spike (marked strike, freezes) | Frost Ray (slowing ray) |
+| Volt | Mage | Storm Call | Spark Bolt (stuns) | Lightning Arc (piercing ray, stuns) | Ball Lightning (slow huge orb, knockdown) |
+
+Marked strikes (Meteor, Glacial Spike) show a circle under the target first; dodge out of it in time.
 
 ## Code map (`src/`)
 - `brand.js` sponsor logo, opening title sequence · `main.js` boot and wiring · `game.js` renderer, fixed 120 Hz simulation, rounds and match flow

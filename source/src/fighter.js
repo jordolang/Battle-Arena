@@ -89,7 +89,7 @@ export class Fighter {
     this.staminaDelay = 0;
     this.exhausted = false;
     this.sprinting = false;
-    this.cooldowns = [0, 0];
+    this.cooldowns = [0, 0, 0];
     this.skill = null;
     this.skillId = null;
     this.skillIdx = -1;
@@ -206,7 +206,7 @@ export class Fighter {
       this.stamina = Math.min(STAMINA_MAX, this.stamina + rate * dt);
     }
     if (this.exhausted && this.stamina >= STAMINA.recoverAt) this.exhausted = false;
-    for (let i = 0; i < 2; i++) if (this.cooldowns[i] > 0) this.cooldowns[i] = Math.max(0, this.cooldowns[i] - dt);
+    for (let i = 0; i < this.cooldowns.length; i++) if (this.cooldowns[i] > 0) this.cooldowns[i] = Math.max(0, this.cooldowns[i] - dt);
     // timed effects
     if (this.armor > 0) this.armor -= dt;
     if (this.power > 0) this.power -= dt;
@@ -279,7 +279,7 @@ export class Fighter {
     const intent = this.controller ? this.controller.getIntent(this, world) : null;
     if (!intent || world.locked) { this.intent = { mx: 0, mz: 0, block: false }; this.buffer = null; this.sprinting = false; return; }
     this.intent = intent;
-    for (const a of ['dash', 'special', 'skill1', 'skill2', 'punch', 'kick', 'jump']) {
+    for (const a of ['dash', 'special', 'skill1', 'skill2', 'skill3', 'punch', 'kick', 'jump']) {
       if (intent[a]) { this.buffer = { action: a, time: world.time }; break; }
     }
     if (this.buffer && world.time - this.buffer.time > 0.22) this.buffer = null;
@@ -300,8 +300,8 @@ export class Fighter {
           this.spendStamina(STAMINA.jump, world);
           world.events.emit('jump', { fighter: this });
         }
-      } else if (action === 'skill1' || action === 'skill2') {
-        if (this.grounded) { this.consumeBuffer(); if (this.startSkill(action === 'skill1' ? 0 : 1, world)) return; }
+      } else if (action === 'skill1' || action === 'skill2' || action === 'skill3') {
+        if (this.grounded) { this.consumeBuffer(); if (this.startSkill(+action.slice(5) - 1, world)) return; }
       } else if (action === 'punch' || action === 'kick') {
         if (this.grounded) { this.consumeBuffer(); this.startAttack(action === 'punch' ? 'jab1' : 'kick1', world); return; }
         if (!this.airAttackUsed && this.pos.y > 0.4) { this.consumeBuffer(); this.airAttackUsed = true; this.startAttack('airkick', world); return; }
@@ -476,7 +476,7 @@ export class Fighter {
     this.setState('skill');
     this.specialPhase = 0;
     this.specialDone = false;
-    if (sk.type === 'bolt' || sk.type === 'wave' || sk.type === 'leap') {
+    if (sk.type === 'bolt' || sk.type === 'wave' || sk.type === 'leap' || sk.type === 'beam') {
       const it = this.intent;
       const moving = Math.hypot(it.mx, it.mz) > 0.1;
       const dir = moving ? Math.atan2(it.mx, it.mz) : this.facing;

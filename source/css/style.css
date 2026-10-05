@@ -65,7 +65,8 @@ kbd {
 .card.tired .bar.st { background: rgba(255, 70, 50, 0.35); animation: pulse 0.35s infinite alternate; }
 .card.tired .bar.st .fill { background: #ff6a4a; }
 .card.teamed { border-top-color: var(--tc); box-shadow: inset 3px 0 0 var(--tc); }
-.card.player { width: clamp(160px, 14vw, 200px); }
+.card.player { width: clamp(190px, 17vw, 240px); }
+.chip { font-size: 9.5px; }
 .chips { display: flex; gap: 3px; margin-top: 4px; }
 .chip {
   position: relative; flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
