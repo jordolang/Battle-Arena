@@ -1,4 +1,4 @@
-# Battle Arena (3D brawler)
+# Jose Madrid Salsa Presents: Battle for the Salsa King (3D brawler)
 
 A Three.js last-one-standing brawler for 2 to 8 fighters, with local and online play.
 

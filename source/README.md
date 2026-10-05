@@ -1,4 +1,9 @@
-# Battle Arena
+# Jose Madrid Salsa Presents: Battle for the Salsa King
+
+Sponsored by Jose Madrid Salsa (josemadridsalsa.com). Every load opens with a sponsor and title sequence
+(any key or click skips it; `?nointro` turns it off). The badge logo is drawn in `src/brand.js`; replace
+`sponsorLogo()` there with the official artwork if you have it.
+
 
 A 3D last-one-standing brawler in Three.js. 2 to 8 fighters, up to four people on one keyboard, CPU fighters fill the rest.
 Play free-for-all or in 2 to 4 named teams. Every fighter has stamina, two castable skills and a special move.
@@ -65,7 +70,7 @@ Sudden death (default 75 s) brings in a closing ring of fire.
 | Onyx | Iron Will | Shatter Wave (knockdown cone) | Fortify (45 damage barrier) |
 
 ## Code map (`src/`)
-- `main.js` boot and wiring · `game.js` renderer, fixed 120 Hz simulation, rounds and match flow
+- `brand.js` sponsor logo, opening title sequence · `main.js` boot and wiring · `game.js` renderer, fixed 120 Hz simulation, rounds and match flow
 - `fighter.js` fighter state machine, movement, attacks, hit reactions · `fighterModel.js` procedural jointed model and poses
 - `specials.js` special moves, skills and projectiles · `ai.js` CPU controller · `input.js` keyboard and human controller
 - `arena.js` coliseum, lighting, crowd, fire ring, collision · `effects.js` pooled particles and FX
