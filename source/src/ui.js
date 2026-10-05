@@ -1,0 +1,276 @@
+// Keyboard-first menus: title, fight setup, controls/rebinding, pause, results.
+import { ROSTER, DIFFICULTY, ACTIONS, ACTION_LABELS, PLAYER_COLORS, DEFAULT_BINDINGS, SPECIALS, keyLabel } from './config.js';
+import { saveBindings } from './input.js';
+
+const SETUP_KEY = 'battle-arena.setup.v1';
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const hex = (n) => '#' + n.toString(16).padStart(6, '0');
+
+export function defaultSetup() {
+  return {
+    count: 4, winsNeeded: 2, difficulty: 'normal', suddenDeath: 75, quality: 'auto',
+    slots: Array.from({ length: 8 }, (_, i) => ({ control: i === 0 ? 0 : 'cpu', fighter: i % ROSTER.length })),
+  };
+}
+
+export function loadSetup() {
+  const d = defaultSetup();
+  try {
+    const s = JSON.parse(localStorage.getItem(SETUP_KEY) || 'null');
+    if (!s) return d;
+    return { ...d, ...s, slots: d.slots.map((slot, i) => ({ ...slot, ...(s.slots?.[i] || {}) })) };
+  } catch { return d; }
+}
+function saveSetup(s) { try { localStorage.setItem(SETUP_KEY, JSON.stringify(s)); } catch { /* ignore */ } }
+
+const SUDDEN = [0, 45, 60, 75, 90, 120];
+const DIFFS = Object.keys(DIFFICULTY);
+const CONTROLS = [0, 1, 2, 3, 'cpu'];
+const QUALITY = ['auto', 'high', 'low'];
+
+export class Menus {
+  constructor({ keyboard, bindings, onStart, onResume, onRestart, onQuit, onQualityChange, onAct, onOpt, onShow }) {
+    this.kb = keyboard;
+    this.bindings = bindings;
+    this.setup = loadSetup();
+    this.cb = { onStart, onResume, onRestart, onQuit, onQualityChange, onAct, onOpt, onShow };
+    this.active = null;
+    this.back = {};
+    this.rebinding = null;
+    this.screens = {};
+    for (const el of document.querySelectorAll('.screen')) this.screens[el.id.replace('screen-', '')] = el;
+    keyboard.onKey((e) => this.onKey(e));
+    document.addEventListener('click', (e) => {
+      if (e.detail === 0) return; // keyboard-generated click; onKey already handled it
+      const t = e.target.closest('[data-act],[data-opt]');
+      if (t && t.tagName === 'INPUT') return; // clicking a text field only focuses it
+      if (t && this.active && this.screens[this.active].contains(t)) this.activate(t);
+    });
+    document.addEventListener('mousemove', (e) => {
+      const t = e.target.closest?.('.nav');
+      if (t && this.active && this.screens[this.active].contains(t) && document.activeElement !== t) t.focus({ preventScroll: true });
+    });
+  }
+
+  show(name) {
+    for (const [k, el] of Object.entries(this.screens)) el.hidden = k !== name;
+    this.active = name;
+    if (!name) return;
+    if (name === 'setup') this.renderSetup();
+    if (name === 'controls') this.renderControls();
+    this.cb.onShow?.(name);
+    const first = this.screens[name].querySelector('.nav');
+    first?.focus({ preventScroll: true });
+  }
+
+  hideAll() { this.show(null); }
+
+  navItems() {
+    if (!this.active) return [];
+    return [...this.screens[this.active].querySelectorAll('.nav')].filter((el) => el.offsetParent !== null);
+  }
+
+  onKey(e) {
+    if (this.rebinding) return this.captureRebind(e);
+    if (!this.active) return false;
+    const items = this.navItems();
+    const cur = document.activeElement && items.includes(document.activeElement) ? document.activeElement : null;
+    const k = e.code;
+    // text fields keep their keys, except the ones that move between items
+    if (cur && cur.tagName === 'INPUT') {
+      if (k === 'Enter' || k === 'NumpadEnter') {
+        if (cur.dataset.act) this.activate(cur);
+        else { const next = spatialNext(cur, items, 'down'); next?.focus(); }
+        return true;
+      }
+      if (k === 'Escape') { cur.blur(); const back = this.screens[this.active].dataset.back; if (back) this.runAct(back); return true; }
+      if (k !== 'ArrowUp' && k !== 'ArrowDown' && k !== 'Tab') return false;
+      if (k === 'Tab') return false;
+    }
+    const dir = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right', KeyW: 'up', KeyS: 'down', KeyA: 'left', KeyD: 'right' }[k];
+    if (dir) {
+      if (!cur) { items[0]?.focus(); return true; }
+      if ((dir === 'left' || dir === 'right') && cur.dataset.opt) { this.change(cur, dir === 'left' ? -1 : 1); return true; }
+      const next = spatialNext(cur, items, dir);
+      if (next) { next.focus(); next.scrollIntoView({ block: 'nearest' }); }
+      return true;
+    }
+    if (k === 'Enter' || k === 'Space' || k === 'NumpadEnter') {
+      if (cur) this.activate(cur);
+      return true;
+    }
+    if (k === 'Escape' || k === 'Backspace') {
+      const back = this.screens[this.active].dataset.back;
+      if (back) this.runAct(back);
+      return true;
+    }
+    return false;
+  }
+
+  activate(el) {
+    if (el.dataset.opt) { this.change(el, 1); return; }
+    if (el.dataset.act) this.runAct(el.dataset.act, el);
+  }
+
+  runAct(act, el) {
+    switch (act) {
+      case 'to-setup': this.show('setup'); break;
+      case 'to-title': this.show('title'); break;
+      case 'to-controls': this.controlsReturn = this.active; this.show('controls'); break;
+      case 'controls-back': this.show(this.controlsReturn || 'title'); break;
+      case 'start': saveSetup(this.setup); this.cb.onStart(this.buildMatchSetup()); break;
+      case 'resume': this.cb.onResume(); break;
+      case 'restart': this.cb.onRestart(); break;
+      case 'quit': this.cb.onQuit(); break;
+      case 'rematch': this.cb.onStart(this.buildMatchSetup()); break;
+      case 'rebind': this.beginRebind(el); break;
+      case 'reset-keys':
+        DEFAULT_BINDINGS.forEach((b, i) => Object.assign(this.bindings[i], b));
+        saveBindings(this.bindings); this.renderControls(); this.focusAct('reset-keys'); break;
+      default: this.cb.onAct?.(act, el);
+    }
+  }
+
+  focusAct(act) { this.screens[this.active]?.querySelector(`[data-act="${act}"]`)?.focus(); }
+
+  buildMatchSetup() {
+    const s = this.setup;
+    return {
+      winsNeeded: s.winsNeeded, difficulty: s.difficulty, suddenDeath: s.suddenDeath, quality: s.quality,
+      slots: s.slots.slice(0, s.count).map((x) => ({ ...x })),
+    };
+  }
+
+  change(el, d) {
+    const s = this.setup;
+    const key = el.dataset.opt, i = +el.dataset.i;
+    const cyc = (arr, v) => arr[(arr.indexOf(v) + d + arr.length) % arr.length];
+    if (!['count', 'wins', 'diff', 'sudden', 'quality', 'control', 'fighter'].includes(key)) { this.cb.onOpt?.(key, el, d); return; }
+    switch (key) {
+      case 'count': s.count = Math.min(8, Math.max(2, s.count + d)); break;
+      case 'wins': s.winsNeeded = Math.min(5, Math.max(1, s.winsNeeded + d)); break;
+      case 'diff': s.difficulty = cyc(DIFFS, s.difficulty); break;
+      case 'sudden': s.suddenDeath = cyc(SUDDEN, s.suddenDeath); break;
+      case 'quality': s.quality = cyc(QUALITY, s.quality); this.cb.onQualityChange?.(s.quality); break;
+      case 'control': {
+        const v = cyc(CONTROLS, s.slots[i].control);
+        // a keyboard player can only own one slot: swap with whoever had it
+        if (v !== 'cpu') {
+          const other = s.slots.findIndex((x, j) => j !== i && j < s.count && x.control === v);
+          if (other >= 0) s.slots[other].control = s.slots[i].control;
+        }
+        s.slots[i].control = v;
+        break;
+      }
+      case 'fighter': {
+        const n = ROSTER.length;
+        s.slots[i].fighter = ((s.slots[i].fighter + 1 + d + n + 1) % (n + 1)) - 1; // -1 = random
+        break;
+      }
+    }
+    saveSetup(s);
+    const focusKey = `${key}:${el.dataset.i ?? ''}`;
+    this.renderSetup();
+    const again = [...this.screens.setup.querySelectorAll('.nav')].find((x) => `${x.dataset.opt}:${x.dataset.i ?? ''}` === focusKey);
+    again?.focus({ preventScroll: true });
+  }
+
+  renderSetup() {
+    const s = this.setup;
+    const opt = (key, label, value, extra = '') =>
+      `<button class="nav opt row" data-opt="${key}" ${extra}><span class="lbl">${label}</span><span class="val"><i>‹</i>${value}<i>›</i></span></button>`;
+    const rules = this.screens.setup.querySelector('.rules');
+    rules.innerHTML = [
+      opt('count', 'Fighters', s.count),
+      opt('wins', 'Rounds to win', s.winsNeeded),
+      opt('diff', 'CPU skill', DIFFICULTY[s.difficulty].label),
+      opt('sudden', 'Sudden death', s.suddenDeath ? `after ${s.suddenDeath}s` : 'Off'),
+      opt('quality', 'Graphics', { auto: 'Auto', high: 'High', low: 'Low' }[s.quality]),
+    ].join('');
+    const slots = this.screens.setup.querySelector('.slots');
+    slots.innerHTML = s.slots.slice(0, s.count).map((slot, i) => {
+      const def = slot.fighter >= 0 ? ROSTER[slot.fighter] : null;
+      const who = slot.control === 'cpu' ? 'CPU' : `Player ${slot.control + 1}`;
+      const whoColor = slot.control === 'cpu' ? '' : `style="color:${PLAYER_COLORS[slot.control]}"`;
+      const sw = def ? hex(def.eyes) : '#888';
+      return `<div class="slot" style="--fc:${sw}">
+        <span class="slot-n">${i + 1}</span>
+        <button class="nav opt who" data-opt="control" data-i="${i}"><span ${whoColor}>${who}</span></button>
+        <button class="nav opt fighter" data-opt="fighter" data-i="${i}">
+          <span class="fname">${def ? esc(def.name) : 'Random'}</span>
+          <span class="ftitle">${def ? `${esc(def.title)} · ${esc(SPECIALS[def.special].label)}` : 'Any of the eight'}</span>
+        </button>
+      </div>`;
+    }).join('');
+    const humans = s.slots.slice(0, s.count).filter((x) => x.control !== 'cpu').length;
+    this.screens.setup.querySelector('.setup-note').textContent = humans
+      ? `${humans} on the keyboard, ${s.count - humans} CPU. Last one standing takes the round.`
+      : 'Everyone is CPU. Sit back and watch, or set a slot to a player.';
+  }
+
+  renderControls() {
+    const el = this.screens.controls.querySelector('.keys');
+    const head = `<div class="kh"></div>${[0, 1, 2, 3].map((p) => `<div class="kh" style="color:${PLAYER_COLORS[p]}">P${p + 1}</div>`).join('')}`;
+    const rows = ACTIONS.map((a) => `<div class="ka">${ACTION_LABELS[a]}</div>${[0, 1, 2, 3].map((p) =>
+      `<button class="nav key" data-act="rebind" data-p="${p}" data-a="${a}">${esc(keyLabel(this.bindings[p][a]))}</button>`).join('')}`).join('');
+    el.innerHTML = head + rows;
+  }
+
+  beginRebind(el) {
+    this.rebinding = el;
+    el.classList.add('listening');
+    el.textContent = 'Press a key';
+  }
+
+  captureRebind(e) {
+    const el = this.rebinding;
+    this.rebinding = null;
+    el.classList.remove('listening');
+    if (e.code !== 'Escape') {
+      const p = +el.dataset.p, a = el.dataset.a;
+      // clear the key anywhere else it is bound, so no two actions share it
+      for (const b of this.bindings) for (const k of ACTIONS) if (b[k] === e.code) b[k] = '';
+      this.bindings[p][a] = e.code;
+      saveBindings(this.bindings);
+    }
+    this.renderControls();
+    this.screens.controls.querySelector(`[data-p="${el.dataset.p}"][data-a="${el.dataset.a}"]`)?.focus();
+    return true;
+  }
+
+  showResults(champ, fighters) {
+    const el = this.screens.results;
+    el.querySelector('.champ').innerHTML = `<span style="color:${hex(champ.def.eyes)}">${esc(champ.name)}</span>`;
+    el.querySelector('.champ-sub').textContent = `${champ.label === 'CPU' ? 'CPU' : champ.label} · ${champ.def.title}`;
+    const sorted = [...fighters].sort((a, b) => b.stats.wins - a.stats.wins || b.stats.kos - a.stats.kos || b.stats.damage - a.stats.damage);
+    el.querySelector('tbody').innerHTML = sorted.map((f) => `<tr>
+      <td><i class="sw" style="background:${hex(f.def.eyes)}"></i>${esc(f.name)}</td>
+      <td>${esc(f.label)}</td><td>${f.stats.wins}</td><td>${f.stats.kos}</td><td>${Math.round(f.stats.damage)}</td></tr>`).join('');
+    this.show('results');
+  }
+}
+
+// Pick the closest focusable element in an arrow direction.
+function spatialNext(cur, items, dir) {
+  const r = cur.getBoundingClientRect();
+  const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+  let best = null, bestScore = Infinity;
+  for (const el of items) {
+    if (el === cur) continue;
+    const q = el.getBoundingClientRect();
+    const x = q.left + q.width / 2, y = q.top + q.height / 2;
+    const dx = x - cx, dy = y - cy;
+    let main, cross;
+    if (dir === 'up') { main = -dy; cross = dx; } else if (dir === 'down') { main = dy; cross = dx; }
+    else if (dir === 'left') { main = -dx; cross = dy; } else { main = dx; cross = dy; }
+    if (main <= 2) continue;
+    const score = main + Math.abs(cross) * 2.5;
+    if (score < bestScore) { bestScore = score; best = el; }
+  }
+  if (!best && (dir === 'down' || dir === 'up')) {
+    // wrap around
+    const i = items.indexOf(cur);
+    best = dir === 'down' ? items[(i + 1) % items.length] : items[(i - 1 + items.length) % items.length];
+  }
+  return best;
+}

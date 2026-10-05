@@ -1,0 +1,222 @@
+// Special moves, projectiles and delayed hazards (lightning).
+import * as THREE from 'three';
+import { wrapAngle } from './fighter.js';
+
+const projGeo = new THREE.SphereGeometry(0.26, 16, 12);
+const tipGeo = new THREE.ConeGeometry(0.1, 0.4, 10).rotateX(Math.PI / 2);
+let nextProjectileId = 1;
+
+export class Projectile {
+  constructor(world, owner, opts) {
+    this.id = nextProjectileId++;
+    this.owner = owner;
+    this.kind = opts.kind;
+    this.pos = new THREE.Vector3(opts.x, opts.y, opts.z);
+    this.dir = new THREE.Vector3(opts.dx, 0, opts.dz);
+    this.speed = opts.speed;
+    this.life = opts.life;
+    this.radius = opts.radius;
+    this.hit = opts.hit;
+    this.dead = false;
+    this.color = opts.color;
+    if (this.kind === 'spear') {
+      this.mesh = new THREE.Mesh(tipGeo, new THREE.MeshStandardMaterial({ color: 0xc9ccd2, metalness: 0.9, roughness: 0.3 }));
+      const chainGeo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
+      this.chain = new THREE.Line(chainGeo, new THREE.LineBasicMaterial({ color: 0x8a8d94 }));
+      world.scene.add(this.chain);
+    } else {
+      this.mesh = new THREE.Mesh(projGeo, new THREE.MeshBasicMaterial({ color: opts.color }));
+      this.glow = world.effects.makeGlow(opts.glow ?? opts.color, 1.6);
+      this.mesh.add(this.glow);
+    }
+    this.mesh.position.copy(this.pos);
+    this.mesh.rotation.y = Math.atan2(opts.dx, opts.dz);
+    world.scene.add(this.mesh);
+  }
+
+  update(dt, world) {
+    this.life -= dt;
+    this.pos.addScaledVector(this.dir, this.speed * dt);
+    this.visual(dt, world);
+    if (this.life <= 0 || world.arena.blocksProjectile(this.pos.x, this.pos.z)) {
+      this.burst(world);
+      return;
+    }
+    for (const f of world.fighters) {
+      if (f === this.owner || !f.alive) continue;
+      const dx = f.pos.x - this.pos.x, dz = f.pos.z - this.pos.z;
+      if (Math.hypot(dx, dz) < this.radius + f.radius && Math.abs(f.pos.y + 1 - this.pos.y) < 1.2) {
+        this.hit(f, this, world);
+        this.burst(world);
+        return;
+      }
+    }
+  }
+
+  // Mesh, chain and trail only. Online clients call this with positions from the host.
+  visual(dt, world) {
+    this.mesh.position.copy(this.pos);
+    if (this.chain) {
+      const p = this.chain.geometry.attributes.position;
+      const o = this.owner.model.root.position;
+      p.setXYZ(0, o.x, 1.35 * this.owner.def.scale, o.z);
+      p.setXYZ(1, this.pos.x, this.pos.y, this.pos.z);
+      p.needsUpdate = true;
+    } else {
+      this.mesh.scale.setScalar(1 + Math.sin(world.time * 40) * 0.08);
+      if (Math.random() < dt * 60) world.effects.trail(this.pos.x, this.pos.y, this.pos.z, this.color);
+    }
+  }
+
+  burst(world) {
+    if (this.kind !== 'spear') world.effects.sparks(this.pos.x, this.pos.y, this.pos.z, this.color, 24, 6);
+    this.dispose(world);
+  }
+
+  dispose(world) {
+    this.dead = true;
+    world.scene.remove(this.mesh);
+    if (this.chain) { world.scene.remove(this.chain); this.chain.geometry.dispose(); }
+    this.mesh.material.dispose();
+  }
+}
+
+function hitAll(f, world, radius, cb) {
+  for (const o of world.fighters) {
+    if (o === f || !o.alive) continue;
+    const dx = o.pos.x - f.pos.x, dz = o.pos.z - f.pos.z;
+    const d = Math.hypot(dx, dz);
+    if (d <= radius + o.radius) cb(o, d, d > 1e-3 ? dx / d : 1, d > 1e-3 ? dz / d : 0);
+  }
+}
+
+export function executeSpecial(f, world) {
+  const fw = f.forward();
+  const pow = f.def.power * (f.armor > 0 ? 1.25 : 1);
+  const kind = f.def.special;
+  world.events.emit('special', { fighter: f, special: kind });
+  const s = f.def.scale;
+
+  switch (kind) {
+    case 'fireball': {
+      world.projectiles.push(new Projectile(world, f, {
+        kind: 'fireball', x: f.pos.x + fw.x * 0.8, y: 1.3 * s, z: f.pos.z + fw.z * 0.8, dx: fw.x, dz: fw.z,
+        speed: 17, life: 1.5, radius: 0.45, color: 0xff7a1c, glow: 0xff5a00,
+        hit: (o, p, w) => o.receiveHit(f, { damage: 14 * pow, knock: 8, hitstun: 0.55, heavy: true, dx: p.dir.x, dz: p.dir.z, kind: 'fire', color: 0xff8a2a }, w),
+      }));
+      break;
+    }
+    case 'spear': {
+      world.projectiles.push(new Projectile(world, f, {
+        kind: 'spear', x: f.pos.x + fw.x * 0.6, y: 1.3 * s, z: f.pos.z + fw.z * 0.6, dx: fw.x, dz: fw.z,
+        speed: 22, life: 0.5, radius: 0.4, color: 0xc0c4cc,
+        hit: (o, p, w) => {
+          // drag the victim to just in front of Kane
+          const dx = f.pos.x + fw.x * 1.3 - o.pos.x, dz = f.pos.z + fw.z * 1.3 - o.pos.z;
+          const d = Math.max(0.01, Math.hypot(dx, dz));
+          const res = o.receiveHit(f, { damage: 8 * pow, knock: Math.min(16, d * 3.2), hitstun: 0.95, pull: true, unblockable: true, dx: dx / d, dz: dz / d, kind: 'spear', color: 0xff3030 }, w);
+          if (res === 'hit') w.events.emit('spearPull', { fighter: o, by: f });
+        },
+      }));
+      break;
+    }
+    case 'frost': {
+      world.effects.cone(f.pos.x, 1.2 * s, f.pos.z, f.facing, 4.8, 0x9fe8ff);
+      hitAll(f, world, 4.8, (o, d, nx, nz) => {
+        const da = Math.abs(wrapAngle(Math.atan2(nx, nz) - f.facing));
+        if (da > 0.65) return;
+        o.receiveHit(f, { damage: 8 * pow, knock: 2, hitstun: 0.3, freeze: 1.5, dx: nx, dz: nz, kind: 'ice', color: 0x9fe8ff }, world);
+      });
+      break;
+    }
+    case 'slam': {
+      world.effects.ring(f.pos.x, 0.1, f.pos.z, 0xffcc66, 4.5);
+      world.effects.dust(f.pos.x, f.pos.z, 4);
+      world.shake(0.55);
+      hitAll(f, world, 4.2, (o, d, nx, nz) => {
+        const fall = 1 - Math.min(1, d / 4.6) * 0.5;
+        o.receiveHit(f, { damage: 15 * pow * fall, knock: 9 * fall, hitstun: 0.6, knockdown: true, heavy: true, unblockable: d < 1.6, dx: nx, dz: nz, kind: 'slam', color: 0xffcc66 }, world);
+      });
+      break;
+    }
+    case 'ironwill': {
+      f.armor = 5;
+      world.effects.ring(f.pos.x, 0.8, f.pos.z, 0xd0e4ff, 2.8);
+      hitAll(f, world, 2.4, (o, d, nx, nz) => {
+        o.receiveHit(f, { damage: 4 * pow, knock: 7, hitstun: 0.35, dx: nx, dz: nz, kind: 'shock', color: 0xd0e4ff }, world);
+      });
+      break;
+    }
+    case 'venom': {
+      // dash forward, poisoning everyone along the path
+      const sx = f.pos.x, sz = f.pos.z;
+      let dist = 7.5;
+      // stop short of walls/pillars
+      for (let d = 0.5; d <= 7.5; d += 0.5) {
+        if (world.arena.blocksProjectile(sx + fw.x * d, sz + fw.z * d)) { dist = Math.max(0, d - 0.8); break; }
+      }
+      const ex = sx + fw.x * dist, ez = sz + fw.z * dist;
+      world.effects.streak(sx, sz, ex, ez, 0x9dff3a);
+      for (const o of world.fighters) {
+        if (o === f || !o.alive) continue;
+        // distance from segment
+        const vx = ex - sx, vz = ez - sz, wx = o.pos.x - sx, wz = o.pos.z - sz;
+        const L = vx * vx + vz * vz || 1;
+        const t = Math.max(0, Math.min(1, (wx * vx + wz * vz) / L));
+        const px = sx + vx * t, pz = sz + vz * t;
+        if (Math.hypot(o.pos.x - px, o.pos.z - pz) < 1.1 + o.radius) {
+          const side = Math.sign(fw.x * (o.pos.z - pz) - fw.z * (o.pos.x - px)) || 1;
+          o.receiveHit(f, { damage: 9 * pow, knock: 5, hitstun: 0.5, poison: 3, heavy: true, dx: fw.x * 0.5 - fw.z * side * 0.8, dz: fw.z * 0.5 + fw.x * side * 0.8, kind: 'venom', color: 0x9dff3a }, world);
+        }
+      }
+      f.pos.x = ex; f.pos.z = ez;
+      f.vel.set(fw.x * 3, 0, fw.z * 3);
+      break;
+    }
+    case 'shadow': {
+      const target = f.findTarget(world, 11, Math.PI);
+      world.effects.puff(f.pos.x, f.pos.z, 0xb070ff);
+      if (target) {
+        const tf = target.forward();
+        let bx = target.pos.x - tf.x * 1.1, bz = target.pos.z - tf.z * 1.1;
+        if (world.arena.blocksProjectile(bx, bz)) { bx = target.pos.x + tf.x * 1.1; bz = target.pos.z + tf.z * 1.1; }
+        f.pos.x = bx; f.pos.z = bz;
+        f.faceToward(target);
+        world.effects.puff(f.pos.x, f.pos.z, 0xb070ff);
+        const d = Math.max(0.01, Math.hypot(target.pos.x - f.pos.x, target.pos.z - f.pos.z));
+        target.receiveHit(f, { damage: 12 * pow, knock: 7, hitstun: 0.7, heavy: true, dx: (target.pos.x - f.pos.x) / d, dz: (target.pos.z - f.pos.z) / d, kind: 'shadow', color: 0xc080ff }, world);
+      } else {
+        let dist = 5;
+        for (let d = 0.5; d <= 5; d += 0.5) if (world.arena.blocksProjectile(f.pos.x + fw.x * d, f.pos.z + fw.z * d)) { dist = d - 0.8; break; }
+        f.pos.x += fw.x * dist; f.pos.z += fw.z * dist;
+        world.effects.puff(f.pos.x, f.pos.z, 0xb070ff);
+      }
+      break;
+    }
+    case 'storm': {
+      const target = f.findTarget(world, 13, Math.PI);
+      const tx = target ? target.pos.x : f.pos.x + fw.x * 5;
+      const tz = target ? target.pos.z : f.pos.z + fw.z * 5;
+      const marker = world.effects.telegraph(tx, tz, 1.7, 0xfff27a, 0.55);
+      world.delayed.push({
+        at: world.time + 0.55,
+        run: (w) => {
+          w.effects.lightning(tx, tz);
+          w.shake(0.3);
+          w.events.emit('thunder', { fighter: f, x: tx, z: tz });
+          for (const o of w.fighters) {
+            if (o === f || !o.alive) continue;
+            const dx = o.pos.x - tx, dz = o.pos.z - tz, d = Math.hypot(dx, dz);
+            if (d < 1.7 + o.radius) {
+              const n = d > 1e-3 ? 1 / d : 0;
+              o.receiveHit(f, { damage: 16 * pow, knock: 6, hitstun: 0.6, knockdown: true, heavy: true, unblockable: true, dx: dx * n || 1, dz: dz * n, kind: 'lightning', color: 0xfff27a }, w);
+            }
+          }
+          marker.done = true;
+        },
+      });
+      break;
+    }
+  }
+}
+

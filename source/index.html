@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Battle Arena</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700&family=Grenze+Gotisch:wght@500&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
+</head>
+<body>
+<!--BODY-START-->
+<div id="app">
+  <div id="stage"></div>
+
+  <div id="hud" hidden>
+    <div id="topbar"><div id="roster"></div><div id="timer"></div></div>
+    <div id="tags"></div>
+    <div id="feed"></div>
+    <div id="announce"></div>
+    <div id="hint"></div>
+  </div>
+  <div id="flash"></div>
+
+  <section class="screen" id="screen-title" hidden>
+    <div class="title-wrap">
+      <div class="eyebrow">2 to 8 fighters · last one standing</div>
+      <h1 class="logo">Battle<em>Arena</em></h1>
+      <p class="tagline">Eight warriors, one blood-moon coliseum. Punch, kick, block and unleash your special until only one is left on their feet.</p>
+      <div class="menu-list">
+        <button class="nav big" data-act="to-setup">Fight</button>
+        <button class="nav big" data-act="to-online">Fight online</button>
+        <button class="nav big" data-act="to-controls">Controls &amp; moves</button>
+      </div>
+      <div class="keys-legend"><kbd>↑</kbd><kbd>↓</kbd> choose · <kbd>Enter</kbd> select · <kbd>←</kbd><kbd>→</kbd> change · <kbd>Esc</kbd> back</div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-setup" data-back="to-title" hidden>
+    <div class="plate">
+      <div class="eyebrow">Prepare the arena</div>
+      <h2>Choose your fighters</h2>
+      <div class="setup-grid">
+        <div>
+          <div class="col-h">Rules</div>
+          <div class="rules"></div>
+        </div>
+        <div>
+          <div class="col-h">Combatants</div>
+          <div class="slots"></div>
+        </div>
+      </div>
+      <p class="setup-note"></p>
+      <div class="actions">
+        <button class="nav big primary" data-act="start">Begin the fight</button>
+        <button class="nav big" data-act="to-controls">Controls</button>
+        <button class="nav big" data-act="to-title">Back</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-controls" data-back="controls-back" hidden>
+    <div class="plate">
+      <div class="eyebrow">Shared keyboard</div>
+      <h2>Controls</h2>
+      <p class="sub">Select a key and press a new one to rebind it. Up to four people can share one keyboard.</p>
+      <div class="keys"></div>
+      <div class="movelist">
+        <div><b>Punch, punch, punch</b> three-hit combo ending in a hook</div>
+        <div><b>Punch, kick</b> jab into a front kick</div>
+        <div><b>Kick, kick</b> roundhouse that knocks down</div>
+        <div><b>Jump, then kick</b> diving kick</div>
+        <div><b>Hold block</b> stops hits from the front; too many and your guard breaks</div>
+        <div><b>Special</b> costs half the blue bar, which fills as you fight</div>
+        <div><b>Sudden death</b> a ring of fire closes in and burns anyone outside it</div>
+        <div><b>Esc</b> or <b>P</b> pauses the match</div>
+      </div>
+      <p class="ghost-note">Some keyboards cannot register many keys at once. If a move does not fire while several people are holding keys, rebind to keys further apart.</p>
+      <div class="actions">
+        <button class="nav big" data-act="reset-keys">Reset to defaults</button>
+        <button class="nav big" data-act="controls-back">Back</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-online" data-back="to-title" hidden>
+    <div class="plate net-plate">
+      <div class="eyebrow">Online · 2 to 8 browsers</div>
+      <h2>Fight friends online</h2>
+      <p class="sub">One person hosts a room and shares its code. Everyone else joins from their own browser and keyboard. CPU fighters take any empty seats.</p>
+      <div class="net-form">
+        <label class="field" for="net-name"><span class="lbl">Your name</span><input id="net-name" class="nav" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Fighter"></label>
+        <div class="net-choice">
+          <div class="net-card">
+            <div class="col-h">Host</div>
+            <p>Open a room and get a code to share.</p>
+            <button class="nav big primary" data-act="net-host">Host a room</button>
+          </div>
+          <div class="net-card">
+            <div class="col-h">Join</div>
+            <label class="field" for="net-code"><span class="lbl">Room code</span><input id="net-code" class="nav code" data-act="net-join" maxlength="5" autocomplete="off" spellcheck="false" placeholder="ABCDE"></label>
+            <button class="nav big" data-act="net-join">Join room</button>
+          </div>
+        </div>
+      </div>
+      <p class="net-status" role="status"></p>
+      <div class="actions"><button class="nav big" data-act="to-title">Back</button></div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-lobby" data-back="net-leave" hidden>
+    <div class="plate">
+      <div class="lobby-head">
+        <div class="eyebrow">Room code</div>
+        <div class="room-code"></div>
+        <p class="lobby-share"></p>
+      </div>
+      <div class="setup-grid">
+        <div>
+          <div class="col-h">Rules</div>
+          <div class="rules net-rules"></div>
+        </div>
+        <div>
+          <div class="col-h">Combatants</div>
+          <div class="slots net-slots"></div>
+        </div>
+      </div>
+      <p class="setup-note net-note"></p>
+      <div class="actions net-actions"></div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-netpause" data-back="net-resume" hidden>
+    <div class="plate" style="width:min(460px,100%)">
+      <div class="eyebrow">Online match</div>
+      <h2>The fight goes on</h2>
+      <p class="sub">Online matches never pause. Your fighter stands still while this menu is open.</p>
+      <div class="menu-list">
+        <button class="nav big" data-act="net-resume">Back to the fight</button>
+        <button class="nav big" data-act="net-leave">Leave room</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-pause" data-back="resume" hidden>
+    <div class="plate" style="width:min(420px,100%)">
+      <div class="eyebrow">Paused</div>
+      <h2>Catch your breath</h2>
+      <div class="menu-list">
+        <button class="nav big" data-act="resume">Resume</button>
+        <button class="nav big" data-act="restart">Restart match</button>
+        <button class="nav big" data-act="to-controls">Controls</button>
+        <button class="nav big" data-act="quit">Quit to title</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="screen" id="screen-results" data-back="quit" hidden>
+    <div class="plate">
+      <div class="eyebrow">Champion of the arena</div>
+      <div class="champ"></div>
+      <p class="champ-sub"></p>
+      <div class="table-wrap">
+        <table class="results-table">
+          <thead><tr><th>Fighter</th><th>Played by</th><th>Rounds</th><th>KOs</th><th>Damage</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="actions">
+        <button class="nav big primary" data-act="rematch">Rematch</button>
+        <button class="nav big" data-act="to-setup">Change fighters</button>
+        <button class="nav big" data-act="quit">Title screen</button>
+      </div>
+    </div>
+  </section>
+
+  <div id="focus-note" hidden>Click the game to give it keyboard control</div>
+  <div id="boot">Entering the arena…</div>
+  <div id="fatal" hidden>The arena went dark<p>Your browser lost the graphics context. Reload the page to fight again.</p></div>
+</div>
+<!--BODY-END-->
+<script src="vendor/peerjs.min.js"></script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
