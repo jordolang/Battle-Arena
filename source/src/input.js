@@ -42,7 +42,12 @@ export function loadBindings() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return fresh;
     const saved = JSON.parse(raw);
-    return fresh.map((b, i) => ({ ...b, ...(saved[i] || {}) }));
+    const merged = fresh.map((b, i) => ({ ...b, ...(saved[i] || {}) }));
+    // actions added after the bindings were saved get their default key, unless a saved binding already uses it
+    const used = new Set();
+    merged.forEach((b, i) => { for (const a of ACTIONS) if (saved[i]?.[a] !== undefined && b[a]) used.add(b[a]); });
+    merged.forEach((b, i) => { for (const a of ACTIONS) if (saved[i]?.[a] === undefined && used.has(b[a])) b[a] = ''; });
+    return merged;
   } catch { return fresh; }
 }
 
@@ -59,7 +64,7 @@ export class HumanController {
     this.playerIndex = playerIndex;
     this.isHuman = true;
     this.seen = {};
-    for (const a of ['punch', 'kick', 'special', 'jump']) this.seen[a] = keyboard.pressCount(binding[a]);
+    for (const a of NET_TAPS) this.seen[a] = keyboard.pressCount(binding[a]);
   }
   edge(action) {
     const n = this.kb.pressCount(this.binding[action]);
@@ -87,6 +92,10 @@ export class HumanController {
       kick: this.edge('kick'),
       special: this.edge('special'),
       jump: this.edge('jump'),
+      dash: this.edge('dash'),
+      dashHeld: kb.isDown(b.dash),
+      skill1: this.edge('skill1'),
+      skill2: this.edge('skill2'),
     };
   }
 }
@@ -101,26 +110,25 @@ export class OnlineKeyboardController {
   }
   getIntent(fighter, world) {
     const [a, b] = this.parts.map((p) => p.getIntent(fighter, world));
-    if (this.isBlocked()) return { mx: 0, mz: 0, block: false, punch: false, kick: false, special: false, jump: false };
+    if (this.isBlocked()) return { mx: 0, mz: 0, block: false, dashHeld: false };
     let mx = a.mx + b.mx, mz = a.mz + b.mz;
     const len = Math.hypot(mx, mz);
     if (len > 1e-4) { mx /= Math.max(1, len); mz /= Math.max(1, len); }
-    return {
-      mx, mz, block: a.block || b.block,
-      punch: a.punch || b.punch, kick: a.kick || b.kick, special: a.special || b.special, jump: a.jump || b.jump,
-    };
+    const it = { mx, mz, block: a.block || b.block, dashHeld: a.dashHeld || b.dashHeld };
+    for (const t of NET_TAPS) it[t] = a[t] || b[t];
+    return it;
   }
 }
 
 // Host side of a remote player: replays the latest input that arrived over the network.
 // Taps travel as running totals, so a lost or reordered packet never drops a punch.
-export const NET_TAPS = ['punch', 'kick', 'special', 'jump'];
+export const NET_TAPS = ['punch', 'kick', 'special', 'jump', 'dash', 'skill1', 'skill2'];
 export class NetController {
   constructor(playerIndex) {
     this.isHuman = true;
     this.playerIndex = playerIndex;
     this.seq = -1;
-    this.mx = 0; this.mz = 0; this.block = false;
+    this.mx = 0; this.mz = 0; this.block = false; this.dashHeld = false;
     this.counts = null;
     this.seen = null;
     this.heardAt = 0;
@@ -133,6 +141,7 @@ export class NetController {
     const k = len > 1 ? 1 / len : 1;
     this.mx = (+msg.mx || 0) * k; this.mz = (+msg.mz || 0) * k;
     this.block = !!msg.b;
+    this.dashHeld = !!msg.d;
     if (!Array.isArray(msg.c)) return;
     if (!this.seen) this.seen = msg.c.slice();
     this.counts = msg.c.slice();
@@ -140,7 +149,7 @@ export class NetController {
   getIntent() {
     // a player whose input stops arriving stands still instead of running forever
     const stale = performance.now() - this.heardAt > 600;
-    const it = { mx: stale ? 0 : this.mx, mz: stale ? 0 : this.mz, block: !stale && this.block };
+    const it = { mx: stale ? 0 : this.mx, mz: stale ? 0 : this.mz, block: !stale && this.block, dashHeld: !stale && this.dashHeld };
     NET_TAPS.forEach((a, i) => {
       const n = this.counts?.[i] ?? 0, seen = this.seen?.[i] ?? 0;
       it[a] = n > seen;

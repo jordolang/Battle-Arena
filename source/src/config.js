@@ -16,6 +16,16 @@ export const ENERGY_MAX = 100;
 export const SPECIAL_COST = 50;
 export const GUARD_MAX = 100;
 
+// Stamina drains on attacks, blocked hits, dodges and sprinting, and refills after a short pause.
+// At zero a fighter is exhausted (slower, weaker, no dodge or sprint) until it climbs back to `recoverAt`.
+export const STAMINA_MAX = 100;
+export const STAMINA = {
+  jump: 6, dodge: 22, sprint: 16, blockPerDamage: 0.6,
+  regen: 26, regenBlocking: 9, delay: 0.7, recoverAt: 35,
+  exhaustedSpeed: 0.78, exhaustedDamage: 0.72, sprintSpeed: 1.5,
+};
+export const DODGE = { duration: 0.34, invuln: 0.24, speed: 13 };
+
 // Base movement in metres per second, multiplied by each fighter's speed stat.
 export const BASE_SPEED = 5.4;
 
@@ -23,17 +33,17 @@ export const BASE_SPEED = 5.4;
 // when the same button (or the other attack button) is pressed in time.
 export const MOVES = {
   jab1: { kind: 'punch', startup: 0.07, active: 0.08, recovery: 0.16, damage: 5, range: 1.55, arc: 1.4,
-          knock: 2.6, hitstun: 0.3, lunge: 2.2, chain: { punch: 'jab2', kick: 'kick1' } },
+          knock: 2.6, hitstun: 0.3, lunge: 2.2, stamina: 5, chain: { punch: 'jab2', kick: 'kick1' } },
   jab2: { kind: 'punch', startup: 0.07, active: 0.08, recovery: 0.16, damage: 5, range: 1.55, arc: 1.4,
-          knock: 2.6, hitstun: 0.3, lunge: 2.2, chain: { punch: 'hook', kick: 'kick1' } },
+          knock: 2.6, hitstun: 0.3, lunge: 2.2, stamina: 5, chain: { punch: 'hook', kick: 'kick1' } },
   hook: { kind: 'punch', startup: 0.13, active: 0.1, recovery: 0.32, damage: 10, range: 1.7, arc: 1.7,
-          knock: 7.5, hitstun: 0.5, lunge: 3.2, heavy: true, chain: {} },
+          knock: 7.5, hitstun: 0.5, lunge: 3.2, heavy: true, stamina: 9, chain: {} },
   kick1: { kind: 'kick', startup: 0.16, active: 0.12, recovery: 0.3, damage: 10, range: 2.0, arc: 1.3,
-           knock: 6.5, hitstun: 0.45, lunge: 2.6, chain: { kick: 'kick2' } },
+           knock: 6.5, hitstun: 0.45, lunge: 2.6, stamina: 9, chain: { kick: 'kick2' } },
   kick2: { kind: 'kick', startup: 0.2, active: 0.14, recovery: 0.42, damage: 13, range: 2.1, arc: 2.4,
-           knock: 9, hitstun: 0.6, lunge: 2.0, heavy: true, knockdown: true, chain: {} },
+           knock: 9, hitstun: 0.6, lunge: 2.0, heavy: true, knockdown: true, stamina: 12, chain: {} },
   airkick: { kind: 'kick', startup: 0.06, active: 0.5, recovery: 0.2, damage: 10, range: 1.7, arc: 1.6,
-             knock: 8, hitstun: 0.5, lunge: 0, heavy: true, knockdown: true, air: true, chain: {} },
+             knock: 8, hitstun: 0.5, lunge: 0, heavy: true, knockdown: true, air: true, stamina: 8, chain: {} },
 };
 
 export const SPECIALS = {
@@ -47,42 +57,95 @@ export const SPECIALS = {
   ironwill: { label: 'Iron Will', startup: 0.3, recovery: 0.3, hint: 'Armors up, shrugs off hits, hits harder' },
 };
 
+// Two castable skills per fighter, paid for with the blue mana bar and gated by a cooldown.
+// type: bolt (projectile), nova (burst around you), wave (cone in front), leap (dash strike),
+//       heal (over time), shield (absorbs damage), buff (timed: power, haste, lifesteal, vanish).
+// pose picks the cast animation from the special-move poses in fighterModel.js.
+export const SKILLS = {
+  flameburst: { label: 'Flame Burst', type: 'nova', cost: 22, cooldown: 7, startup: 0.26, recovery: 0.3, pose: 'ironwill',
+                color: 0xff7a1c, radius: 3.3, damage: 9, knock: 6, burn: 3, hint: 'Fire erupts around you and sets foes alight' },
+  phoenix:    { label: 'Phoenix Rise', type: 'heal', cost: 30, cooldown: 15, startup: 0.3, recovery: 0.2, pose: 'storm',
+                color: 0xffb347, heal: 28, duration: 3, hint: 'Heals 28 health over three seconds' },
+  shards:     { label: 'Ice Shards', type: 'bolt', cost: 20, cooldown: 6, startup: 0.2, recovery: 0.3, pose: 'fireball',
+                color: 0xbfefff, glow: 0x5fc8ff, count: 3, spread: 0.24, speed: 21, life: 0.85, size: 0.6, damage: 6, slow: 2.5, knock: 3, hint: 'Three shards that chill and slow' },
+  frostarmor: { label: 'Frost Armor', type: 'shield', cost: 28, cooldown: 14, startup: 0.2, recovery: 0.2, pose: 'ironwill',
+                color: 0x9fe8ff, shield: 35, duration: 6, hint: 'An ice barrier soaks up 35 damage' },
+  boulder:    { label: 'Boulder Toss', type: 'bolt', cost: 24, cooldown: 7, startup: 0.4, recovery: 0.35, pose: 'storm',
+                color: 0x8b6a3e, glow: 0xffb04a, speed: 13, life: 1.3, size: 1.7, damage: 15, knock: 9, knockdown: true, hint: 'Hurls a rock that knocks foes flat' },
+  warcry:     { label: 'War Cry', type: 'buff', buff: 'power', cost: 25, cooldown: 15, startup: 0.35, recovery: 0.25, pose: 'ironwill',
+                color: 0xffcc66, duration: 6, stamina: 100, hint: 'Refills stamina and hits 30% harder for six seconds' },
+  spit:       { label: 'Venom Spit', type: 'bolt', cost: 18, cooldown: 5, startup: 0.16, recovery: 0.28, pose: 'spear',
+                color: 0x9dff3a, glow: 0x5fd010, speed: 25, life: 0.8, size: 0.5, damage: 5, poison: 4, knock: 3, hint: 'A glob of venom that poisons' },
+  haste:      { label: 'Serpent Haste', type: 'buff', buff: 'haste', cost: 24, cooldown: 13, startup: 0.15, recovery: 0.15, pose: 'venom',
+                color: 0xc6ff4a, duration: 5, hint: 'Run faster and recover stamina twice as fast' },
+  spark:      { label: 'Spark Bolt', type: 'bolt', cost: 20, cooldown: 6, startup: 0.18, recovery: 0.28, pose: 'storm',
+                color: 0xfff27a, glow: 0xffe14a, speed: 30, life: 0.6, size: 0.55, damage: 8, stun: 0.7, knock: 2, hint: 'A crackling bolt that stuns' },
+  static:     { label: 'Static Field', type: 'nova', cost: 26, cooldown: 12, startup: 0.3, recovery: 0.3, pose: 'ironwill',
+                color: 0xfff6a8, radius: 3.7, damage: 7, stun: 1.1, knock: 2, hint: 'Shocks and stuns everyone close by' },
+  voidbolt:   { label: 'Void Bolt', type: 'bolt', cost: 20, cooldown: 6, startup: 0.2, recovery: 0.3, pose: 'fireball',
+                color: 0xb070ff, glow: 0x8a3cff, speed: 20, life: 0.9, size: 0.7, damage: 9, drain: 1, knock: 4, hint: 'Steals health from whoever it hits' },
+  vanish:     { label: 'Vanish', type: 'buff', buff: 'vanish', cost: 26, cooldown: 14, startup: 0.1, recovery: 0.1, pose: 'venom',
+                color: 0xe08bff, duration: 1.8, hint: 'Turn unseen and untouchable for a moment' },
+  bloodrush:  { label: 'Blood Rush', type: 'leap', cost: 20, cooldown: 7, startup: 0.14, recovery: 0.32, pose: 'venom',
+                color: 0xff3030, range: 8, damage: 11, knock: 7, hint: 'Lunges at the nearest foe and strikes' },
+  bloodlust:  { label: 'Bloodlust', type: 'buff', buff: 'lifesteal', cost: 26, cooldown: 15, startup: 0.3, recovery: 0.2, pose: 'ironwill',
+                color: 0xff5a4a, duration: 6, hint: 'For six seconds your hits heal you' },
+  shatter:    { label: 'Shatter Wave', type: 'wave', cost: 24, cooldown: 8, startup: 0.32, recovery: 0.35, pose: 'slam',
+                color: 0xd0e4ff, length: 5.5, arc: 0.75, damage: 12, knock: 9, knockdown: true, hint: 'A shockwave that knocks down everything ahead' },
+  fortify:    { label: 'Fortify', type: 'shield', cost: 28, cooldown: 14, startup: 0.25, recovery: 0.2, pose: 'ironwill',
+                color: 0xd0e4ff, shield: 45, duration: 6, hint: 'Stone skin soaks up 45 damage' },
+};
+export const SKILL_IDS = Object.keys(SKILLS);
+
+// Team play: fighters on one team cannot hurt each other and the last team standing takes the round.
+export const TEAM_COLORS = [0xd23a2a, 0x2f6fe0, 0x3fae4a, 0xe0b030];
+export const TEAM_DEFAULT_NAMES = ['Crimson Legion', 'Azure Order', 'Verdant Clan', 'Golden Host'];
+export const TEAM_COUNTS = [0, 2, 3, 4];
+export function cleanTeamName(s, i) {
+  return String(s ?? '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 18) || TEAM_DEFAULT_NAMES[i] || `Team ${i + 1}`;
+}
+
 // Colours are linear-ish hex values for MeshStandardMaterial.
 export const ROSTER = [
   { id: 'ember', name: 'Ember', title: 'The Pyre Monk', gi: 0xd8641c, trim: 0x2a120a, eyes: 0xffb347,
-    special: 'fireball', speed: 1.0, power: 1.0, health: 100, scale: 1.0, accessory: 'topknot' },
+    special: 'fireball', speed: 1.0, power: 1.0, health: 100, scale: 1.0, accessory: 'topknot', skills: ['flameburst', 'phoenix'] },
   { id: 'frost', name: 'Frost', title: 'Warden of the North', gi: 0x2f7fd0, trim: 0x0d1f33, eyes: 0x9fe8ff,
-    special: 'frost', speed: 0.98, power: 0.95, health: 104, scale: 1.0, accessory: 'none' },
+    special: 'frost', speed: 0.98, power: 0.95, health: 104, scale: 1.0, accessory: 'none', skills: ['shards', 'frostarmor'] },
   { id: 'titan', name: 'Titan', title: 'The Mountain', gi: 0x8b6a3e, trim: 0x2b2116, eyes: 0xffdd77,
-    special: 'slam', speed: 0.84, power: 1.2, health: 125, scale: 1.16, accessory: 'pads' },
+    special: 'slam', speed: 0.84, power: 1.2, health: 125, scale: 1.16, accessory: 'pads', skills: ['boulder', 'warcry'] },
   { id: 'viper', name: 'Viper', title: 'Fang of the Marsh', gi: 0x3f9b3a, trim: 0x10240f, eyes: 0xc6ff4a,
-    special: 'venom', speed: 1.12, power: 0.9, health: 92, scale: 0.96, accessory: 'none' },
+    special: 'venom', speed: 1.12, power: 0.9, health: 92, scale: 0.96, accessory: 'none', skills: ['spit', 'haste'] },
   { id: 'volt', name: 'Volt', title: 'Thunder Herald', gi: 0xe0c13a, trim: 0x2e2708, eyes: 0xfff6a8,
-    special: 'storm', speed: 1.04, power: 0.98, health: 98, scale: 1.0, accessory: 'horns' },
+    special: 'storm', speed: 1.04, power: 0.98, health: 98, scale: 1.0, accessory: 'horns', skills: ['spark', 'static'] },
   { id: 'shade', name: 'Shade', title: 'The Unseen', gi: 0x6b3fa8, trim: 0x170c26, eyes: 0xe08bff,
-    special: 'shadow', speed: 1.1, power: 0.92, health: 94, scale: 0.98, accessory: 'hood' },
+    special: 'shadow', speed: 1.1, power: 0.92, health: 94, scale: 0.98, accessory: 'hood', skills: ['voidbolt', 'vanish'] },
   { id: 'kane', name: 'Kane', title: 'Blood Hunter', gi: 0xa8202c, trim: 0x22070a, eyes: 0xff5a4a,
-    special: 'spear', speed: 1.0, power: 1.03, health: 100, scale: 1.02, accessory: 'none' },
+    special: 'spear', speed: 1.0, power: 1.03, health: 100, scale: 1.02, accessory: 'none', skills: ['bloodrush', 'bloodlust'] },
   { id: 'onyx', name: 'Onyx', title: 'Iron Revenant', gi: 0x3a3d44, trim: 0x0b0c0e, eyes: 0xd0e4ff,
-    special: 'ironwill', speed: 0.92, power: 1.1, health: 115, scale: 1.08, accessory: 'horns' },
+    special: 'ironwill', speed: 0.92, power: 1.1, health: 115, scale: 1.08, accessory: 'horns', skills: ['shatter', 'fortify'] },
 ];
 
-export const ACTIONS = ['up', 'down', 'left', 'right', 'punch', 'kick', 'block', 'special', 'jump'];
+export const ACTIONS = ['up', 'down', 'left', 'right', 'punch', 'kick', 'block', 'special', 'jump', 'dash', 'skill1', 'skill2'];
 export const ACTION_LABELS = {
   up: 'Move up', down: 'Move down', left: 'Move left', right: 'Move right',
   punch: 'Punch', kick: 'Kick', block: 'Block (hold)', special: 'Special', jump: 'Jump',
+  dash: 'Dodge (tap) / sprint (hold)', skill1: 'Skill 1', skill2: 'Skill 2',
 };
 
 // KeyboardEvent.code values, so bindings work on any keyboard layout.
 export const DEFAULT_BINDINGS = [
   { up: 'KeyW', down: 'KeyS', left: 'KeyA', right: 'KeyD',
-    punch: 'KeyF', kick: 'KeyG', block: 'KeyH', special: 'KeyR', jump: 'Space' },
+    punch: 'KeyF', kick: 'KeyG', block: 'KeyH', special: 'KeyR', jump: 'Space',
+    dash: 'ShiftLeft', skill1: 'KeyQ', skill2: 'KeyE' },
   { up: 'ArrowUp', down: 'ArrowDown', left: 'ArrowLeft', right: 'ArrowRight',
-    punch: 'KeyK', kick: 'KeyL', block: 'Semicolon', special: 'KeyO', jump: 'Enter' },
+    punch: 'KeyK', kick: 'KeyL', block: 'Semicolon', special: 'KeyO', jump: 'Enter',
+    dash: 'ShiftRight', skill1: 'Period', skill2: 'Slash' },
   { up: 'Numpad8', down: 'Numpad5', left: 'Numpad4', right: 'Numpad6',
-    punch: 'Numpad1', kick: 'Numpad2', block: 'Numpad3', special: 'Numpad7', jump: 'Numpad0' },
+    punch: 'Numpad1', kick: 'Numpad2', block: 'Numpad3', special: 'Numpad7', jump: 'Numpad0',
+    dash: 'NumpadDecimal', skill1: 'Numpad9', skill2: 'NumpadAdd' },
   { up: 'KeyY', down: 'KeyN', left: 'KeyB', right: 'KeyM',
-    punch: 'KeyU', kick: 'KeyI', block: 'KeyJ', special: 'Digit7', jump: 'Digit8' },
+    punch: 'KeyU', kick: 'KeyI', block: 'KeyJ', special: 'Digit7', jump: 'Digit8',
+    dash: 'KeyV', skill1: 'Digit6', skill2: 'Digit9' },
 ];
 
 export const PLAYER_COLORS = ['#ff6b3d', '#3db8ff', '#7dff6b', '#ffd23d'];
@@ -98,6 +161,8 @@ export function keyLabel(code) {
   if (!code) return '—';
   if (code.startsWith('Key')) return code.slice(3);
   if (code.startsWith('Digit')) return code.slice(5);
+  if (code === 'NumpadDecimal') return 'Num .';
+  if (code === 'NumpadAdd') return 'Num +';
   if (code.startsWith('Numpad')) return 'Num ' + code.slice(6);
   const map = {
     ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Space: 'Space', Enter: 'Enter',

@@ -1,8 +1,8 @@
 // CPU opponents. Each AI reads the same world state a player sees and
 // produces the same intent a keyboard would, so it can be swapped for a
 // network-driven controller later without touching fighter code.
-import { DIFFICULTY, SPECIAL_COST } from './config.js';
-import { wrapAngle } from './fighter.js';
+import { DIFFICULTY, SPECIAL_COST, SKILLS } from './config.js';
+import { wrapAngle, allies } from './fighter.js';
 
 const PREFERRED_SPECIAL_RANGE = {
   fireball: [3, 12], spear: [3, 9.5], frost: [1, 4.2], slam: [0, 3.2], venom: [2, 7],
@@ -24,12 +24,13 @@ export class AIController {
     this.pressQueue = [];
     this.bias = new Map();
     this.wantMove = { x: 0, z: 0 };
+    this.sprint = false;
   }
 
   pickTarget(me, world) {
     let best = null, bestScore = Infinity;
     for (const o of world.fighters) {
-      if (o === me || !o.alive) continue;
+      if (o === me || !o.alive || allies(me, o) || o.vanish > 0) continue;
       if (!this.bias.has(o.id)) this.bias.set(o.id, Math.random() * 4);
       const d = Math.hypot(o.pos.x - me.pos.x, o.pos.z - me.pos.z);
       let score = d + this.bias.get(o.id) + (o.hp / o.maxHp) * 3;
@@ -61,6 +62,7 @@ export class AIController {
     intent.block = now < this.blockUntil;
     intent.mx = this.wantMove.x;
     intent.mz = this.wantMove.z;
+    intent.dashHeld = this.sprint && !intent.block;
     return intent;
   }
 
@@ -72,6 +74,7 @@ export class AIController {
     }
     const T = this.target;
     this.wantMove = { x: 0, z: 0 };
+    this.sprint = false;
     if (!T) return;
 
     const dx = T.pos.x - me.pos.x, dz = T.pos.z - me.pos.z;
@@ -89,6 +92,12 @@ export class AIController {
     // 2) defend against an incoming attack or projectile
     const threat = this.findThreat(me, world);
     if (threat && Math.random() < this.p.block) {
+      if (!me.exhausted && me.stamina > 35 && Math.random() < 0.3 * this.p.accuracy) {
+        // roll out of the way
+        this.wantMove = { x: -threat.dz * this.strafe, z: threat.dx * this.strafe };
+        this.press('dash', 0);
+        return;
+      }
       if (threat.type === 'projectile' && Math.random() < 0.45) {
         // sidestep instead of blocking
         this.wantMove = { x: -threat.dz * this.strafe, z: threat.dx * this.strafe };
@@ -113,7 +122,7 @@ export class AIController {
       let ok = dist >= lo && dist <= hi;
       if (sp === 'slam' || sp === 'ironwill') {
         let near = 0;
-        for (const o of world.fighters) if (o !== me && o.alive && Math.hypot(o.pos.x - me.pos.x, o.pos.z - me.pos.z) < 3.4) near++;
+        for (const o of world.fighters) if (o !== me && o.alive && !allies(me, o) && Math.hypot(o.pos.x - me.pos.x, o.pos.z - me.pos.z) < 3.4) near++;
         ok = near >= 2 || (near >= 1 && Math.random() < 0.5);
       }
       if (ok && (sp === 'fireball' || sp === 'spear') && this.lineBlocked(me, T, world)) ok = false;
@@ -126,8 +135,17 @@ export class AIController {
       }
     }
 
+    // 3b) skills
+    if (Math.random() < this.p.special * 0.5 && this.trySkill(me, T, dist, nx, nz, world)) return;
+
     const lowHp = me.hp / me.maxHp < 0.25;
     const reach = 1.55 * me.def.scale + T.radius;
+
+    // out of breath: back off and let stamina recover
+    if (me.exhausted && now >= this.planUntil && Math.random() < 0.6) {
+      this.plan = 'retreat'; this.planUntil = now + 1.0 + Math.random() * 0.8;
+      return;
+    }
 
     // 4) back off sometimes when hurt, or after a combo
     if (now < this.planUntil && this.plan === 'retreat') {
@@ -157,6 +175,7 @@ export class AIController {
       const l = Math.hypot(mx, mz) || 1;
       const hesitate = Math.random() > this.p.aggression ? 0.35 : 1;
       this.wantMove = { x: (mx / l) * hesitate, z: (mz / l) * hesitate };
+      this.sprint = dist > 7 && hesitate === 1 && !me.exhausted && me.stamina > 45;
       if (Math.random() < 0.04) this.strafe *= -1;
       // occasional jump-in kick
       if (dist < 4 && dist > 2.6 && Math.random() < 0.05 * this.p.aggression) {
@@ -187,13 +206,46 @@ export class AIController {
     }
   }
 
+  // Pick one of this fighter's two skills when the situation suits it. Returns true if cast.
+  trySkill(me, T, dist, nx, nz, world) {
+    let near = 0;
+    for (const o of world.fighters) if (o !== me && o.alive && !allies(me, o) && Math.hypot(o.pos.x - me.pos.x, o.pos.z - me.pos.z) < 3.6) near++;
+    const hurt = me.hp / me.maxHp;
+    for (let i = 0; i < 2; i++) {
+      const sk = SKILLS[me.skillIds[i]];
+      if (!sk || me.cooldowns[i] > 0 || me.energy < sk.cost) continue;
+      let ok = false;
+      switch (sk.type) {
+        case 'bolt': ok = dist > 2.5 && dist < sk.speed * sk.life * 0.9 && !this.lineBlocked(me, T, world); break;
+        case 'nova': ok = near >= 2 || (near >= 1 && dist < sk.radius * 0.8); break;
+        case 'wave': ok = dist < sk.length * 0.85; break;
+        case 'leap': ok = dist > 3 && dist < sk.range; break;
+        case 'heal': ok = hurt < 0.55 && me.healLeft <= 0; break;
+        case 'shield': ok = near >= 1 && me.shield <= 0; break;
+        case 'buff':
+          if (sk.buff === 'haste') ok = dist > 6 || hurt < 0.3;
+          else if (sk.buff === 'vanish') ok = hurt < 0.4 && near >= 1;
+          else ok = dist < 4 || (sk.stamina && me.exhausted);
+          break;
+      }
+      if (!ok) continue;
+      if (sk.type === 'bolt' || sk.type === 'wave' || sk.type === 'leap') {
+        this.wantMove = { x: nx * 0.01, z: nz * 0.01 };
+        me.facing = Math.atan2(nx, nz) + (Math.random() - 0.5) * (1 - this.p.accuracy) * 0.6;
+      }
+      this.press(i === 0 ? 'skill1' : 'skill2', 0);
+      return true;
+    }
+    return false;
+  }
+
   press(action, delay) {
     this.pressQueue.push({ action, at: this._now + delay });
   }
 
   findThreat(me, world) {
     for (const o of world.fighters) {
-      if (o === me || !o.alive) continue;
+      if (o === me || !o.alive || allies(me, o)) continue;
       const dx = me.pos.x - o.pos.x, dz = me.pos.z - o.pos.z, d = Math.hypot(dx, dz);
       if (d > 3) continue;
       const attacking = (o.state === 'attack' && o.attackPhase < 1.6) || (o.state === 'special' && o.specialPhase < 1);
@@ -202,7 +254,7 @@ export class AIController {
       if (da < 0.8) return { type: 'melee', dx: dx / d, dz: dz / d };
     }
     for (const p of world.projectiles) {
-      if (p.owner === me) continue;
+      if (p.owner === me || allies(me, p.owner)) continue;
       const rx = me.pos.x - p.pos.x, rz = me.pos.z - p.pos.z, d = Math.hypot(rx, rz);
       if (d > 8) continue;
       if ((rx * p.dir.x + rz * p.dir.z) / d > 0.85) return { type: 'projectile', dx: p.dir.x, dz: p.dir.z };

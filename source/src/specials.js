@@ -1,6 +1,7 @@
 // Special moves, projectiles and delayed hazards (lightning).
 import * as THREE from 'three';
-import { wrapAngle } from './fighter.js';
+import { wrapAngle, allies } from './fighter.js';
+import { SKILLS } from './config.js';
 
 const projGeo = new THREE.SphereGeometry(0.26, 16, 12);
 const tipGeo = new THREE.ConeGeometry(0.1, 0.4, 10).rotateX(Math.PI / 2);
@@ -28,6 +29,8 @@ export class Projectile {
       this.mesh = new THREE.Mesh(projGeo, new THREE.MeshBasicMaterial({ color: opts.color }));
       this.glow = world.effects.makeGlow(opts.glow ?? opts.color, 1.6);
       this.mesh.add(this.glow);
+      this.size = opts.size ?? 1;
+      this.mesh.scale.setScalar(this.size);
     }
     this.mesh.position.copy(this.pos);
     this.mesh.rotation.y = Math.atan2(opts.dx, opts.dz);
@@ -43,7 +46,7 @@ export class Projectile {
       return;
     }
     for (const f of world.fighters) {
-      if (f === this.owner || !f.alive) continue;
+      if (f === this.owner || !f.alive || allies(this.owner, f) || f.vanish > 0) continue;
       const dx = f.pos.x - this.pos.x, dz = f.pos.z - this.pos.z;
       if (Math.hypot(dx, dz) < this.radius + f.radius && Math.abs(f.pos.y + 1 - this.pos.y) < 1.2) {
         this.hit(f, this, world);
@@ -63,7 +66,7 @@ export class Projectile {
       p.setXYZ(1, this.pos.x, this.pos.y, this.pos.z);
       p.needsUpdate = true;
     } else {
-      this.mesh.scale.setScalar(1 + Math.sin(world.time * 40) * 0.08);
+      this.mesh.scale.setScalar((this.size ?? 1) * (1 + Math.sin(world.time * 40) * 0.08));
       if (Math.random() < dt * 60) world.effects.trail(this.pos.x, this.pos.y, this.pos.z, this.color);
     }
   }
@@ -83,7 +86,7 @@ export class Projectile {
 
 function hitAll(f, world, radius, cb) {
   for (const o of world.fighters) {
-    if (o === f || !o.alive) continue;
+    if (o === f || !o.alive || allies(f, o)) continue;
     const dx = o.pos.x - f.pos.x, dz = o.pos.z - f.pos.z;
     const d = Math.hypot(dx, dz);
     if (d <= radius + o.radius) cb(o, d, d > 1e-3 ? dx / d : 1, d > 1e-3 ? dz / d : 0);
@@ -92,7 +95,7 @@ function hitAll(f, world, radius, cb) {
 
 export function executeSpecial(f, world) {
   const fw = f.forward();
-  const pow = f.def.power * (f.armor > 0 ? 1.25 : 1);
+  const pow = f.dmgMult();
   const kind = f.def.special;
   world.events.emit('special', { fighter: f, special: kind });
   const s = f.def.scale;
@@ -220,3 +223,92 @@ export function executeSpecial(f, world) {
   }
 }
 
+
+// Skills (two per fighter, see SKILLS in config.js).
+function skillHit(sk, pow, dx, dz, extra = {}) {
+  return {
+    damage: sk.damage * pow, knock: sk.knock ?? 4, hitstun: 0.45, heavy: sk.damage >= 10, knockdown: !!sk.knockdown,
+    stun: sk.stun, slow: sk.slow, poison: sk.poison || sk.burn, poisonColor: sk.burn ? 0xff7a1c : undefined, drain: sk.drain,
+    dx, dz, kind: 'skill', color: sk.color, ...extra,
+  };
+}
+
+export function executeSkill(f, id, world) {
+  const sk = SKILLS[id];
+  if (!sk) return;
+  const fw = f.forward();
+  const pow = f.dmgMult();
+  const s = f.def.scale;
+  world.events.emit('skill', { fighter: f, skill: id });
+
+  switch (sk.type) {
+    case 'bolt': {
+      const n = sk.count || 1;
+      for (let i = 0; i < n; i++) {
+        const a = f.facing + (i - (n - 1) / 2) * (sk.spread || 0);
+        const dx = Math.sin(a), dz = Math.cos(a);
+        world.projectiles.push(new Projectile(world, f, {
+          kind: id, x: f.pos.x + dx * 0.8, y: 1.3 * s, z: f.pos.z + dz * 0.8, dx, dz,
+          speed: sk.speed, life: sk.life, radius: 0.3 + 0.18 * (sk.size || 1), color: sk.color, glow: sk.glow, size: sk.size,
+          hit: (o, p, w) => o.receiveHit(f, skillHit(sk, pow, p.dir.x, p.dir.z), w),
+        }));
+      }
+      break;
+    }
+    case 'nova': {
+      world.effects.ring(f.pos.x, 0.6, f.pos.z, sk.color, sk.radius);
+      world.effects.sparks(f.pos.x, 1.0, f.pos.z, sk.color, 30, 7);
+      world.shake(0.2);
+      hitAll(f, world, sk.radius, (o, d, nx, nz) => o.receiveHit(f, skillHit(sk, pow, nx, nz, { unblockable: d < 1.4 }), world));
+      break;
+    }
+    case 'wave': {
+      world.effects.cone(f.pos.x, 0.5, f.pos.z, f.facing, sk.length, sk.color);
+      world.effects.dust(f.pos.x + fw.x * 2, f.pos.z + fw.z * 2, 2);
+      world.shake(0.3);
+      hitAll(f, world, sk.length, (o, d, nx, nz) => {
+        if (Math.abs(wrapAngle(Math.atan2(nx, nz) - f.facing)) > sk.arc) return;
+        o.receiveHit(f, skillHit(sk, pow, nx, nz), world);
+      });
+      break;
+    }
+    case 'leap': {
+      // lunge to just in front of the target (or a fixed distance), striking on arrival
+      const target = f.findTarget(world, sk.range, 0.9) || f.findTarget(world, sk.range * 0.6, Math.PI);
+      let dist = sk.range * 0.6;
+      if (target) { f.faceToward(target); dist = Math.max(0, Math.hypot(target.pos.x - f.pos.x, target.pos.z - f.pos.z) - 1.1); }
+      const dir = f.forward();
+      for (let d = 0.5; d <= dist; d += 0.5) {
+        if (world.arena.blocksProjectile(f.pos.x + dir.x * d, f.pos.z + dir.z * d)) { dist = Math.max(0, d - 0.8); break; }
+      }
+      const sx = f.pos.x, sz = f.pos.z;
+      f.pos.x += dir.x * dist; f.pos.z += dir.z * dist;
+      world.effects.streak(sx, sz, f.pos.x, f.pos.z, sk.color);
+      f.vel.set(dir.x * 2, 0, dir.z * 2);
+      if (target && Math.hypot(target.pos.x - f.pos.x, target.pos.z - f.pos.z) < 2.2) {
+        const d = Math.max(0.01, Math.hypot(target.pos.x - f.pos.x, target.pos.z - f.pos.z));
+        target.receiveHit(f, skillHit(sk, pow, (target.pos.x - f.pos.x) / d, (target.pos.z - f.pos.z) / d), world);
+      }
+      break;
+    }
+    case 'heal':
+      f.healLeft = sk.heal;
+      f.healRate = sk.heal / sk.duration;
+      world.effects.ring(f.pos.x, 0.2, f.pos.z, sk.color, 1.8, 0.7);
+      world.effects.sparks(f.pos.x, 1.2, f.pos.z, sk.color, 20, 3);
+      break;
+    case 'shield':
+      f.shield = sk.shield;
+      f.shieldTime = sk.duration;
+      world.effects.ring(f.pos.x, 1.0, f.pos.z, sk.color, 1.6, 0.5);
+      break;
+    case 'buff':
+      if (sk.buff === 'power') { f.power = sk.duration; if (sk.stamina) { f.stamina = Math.min(100, f.stamina + sk.stamina); f.exhausted = false; } world.shake(0.15); }
+      if (sk.buff === 'haste') f.haste = sk.duration;
+      if (sk.buff === 'lifesteal') f.lifesteal = sk.duration;
+      if (sk.buff === 'vanish') { f.vanish = sk.duration; f.haste = Math.max(f.haste, sk.duration); world.effects.puff(f.pos.x, f.pos.z, sk.color); }
+      world.effects.ring(f.pos.x, 0.8, f.pos.z, sk.color, 2.2, 0.5);
+      break;
+  }
+  f.updateBuffVisuals();
+}

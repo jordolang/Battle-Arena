@@ -106,10 +106,37 @@ export function buildFighterModel(def) {
     color: def.eyes, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false,
   }));
   aura.position.y = 0.95; aura.visible = false; body.add(aura);
+  // Barrier bubble for shield skills; lives on the root so it stays up while the body flickers.
+  const shell = new THREE.Mesh(geo('shell', () => new THREE.SphereGeometry(1, 24, 16)), new THREE.MeshBasicMaterial({
+    color: 0x9fe8ff, transparent: true, opacity: 0.18, blending: THREE.AdditiveBlending, depthWrite: false,
+  }));
+  shell.scale.set(0.8 * s, 1.15 * s, 0.8 * s); shell.position.y = 1.0 * s; shell.visible = false; root.add(shell);
 
   const rest = {};
   for (const k of JOINTS) rest[k] = { x: 0, y: 0, z: 0 };
-  return { root, body, joints: J, ring, ice, aura, mats, eyeMat, current: rest, hipsBaseY: 0.98 };
+  return { root, body, joints: J, ring, ice, aura, shell, mats, eyeMat, current: rest, hipsBaseY: 0.98 };
+}
+
+// Dress a fighter in team colours: the gi takes the team colour (keeping a hint of the
+// fighter's own), and team-coloured pauldrons and a tabard go on over it.
+export function applyTeamOutfit(model, color) {
+  const [giMat] = model.mats;
+  const team = new THREE.Color(color);
+  giMat.color.lerp(team, 0.72);
+  const teamMat = new THREE.MeshStandardMaterial({ color: team, roughness: 0.4, metalness: 0.55, emissive: team, emissiveIntensity: 0.12 });
+  model.mats.push(teamMat);
+  const chest = model.joints.chest;
+  for (const side of [-1, 1]) {
+    const pad = new THREE.Mesh(sphere(0.12), teamMat);
+    pad.scale.set(1.15, 0.65, 1.1);
+    pad.position.set(side * 0.3, 0.27, 0);
+    pad.castShadow = true;
+    chest.add(pad);
+  }
+  const tabard = new THREE.Mesh(box(0.22, 0.42, 0.03), teamMat);
+  tabard.position.set(0, -0.32, 0.135);
+  model.joints.hips.add(tabard);
+  model.ring.material.color.copy(team);
 }
 
 function addAccessory(kind, head, chest, { giMat, trimMat, metalMat }) {
@@ -247,6 +274,11 @@ const downPose = {
   shL: [-2.6, 0, 0.6], elL: [-0.3, 0, 0], shR: [-2.8, 0, -0.5], elR: [-0.4, 0, 0],
   hipL: [-0.15, 0, 0.2], knL: [0.25, 0, 0], hipR: [-0.35, 0, -0.15], knR: [0.5, 0, 0], head: [0.3, 0.4, 0],
 };
+const dodgePose = {
+  ...guard, spine: [0.75, 0, 0], chest: [0.35, 0, 0], head: [-0.4, 0, 0], lift: -0.36,
+  hipL: [-1.3, 0, 0.15], knL: [2.0, 0, 0], hipR: [-0.6, 0, -0.15], knR: [1.7, 0, 0],
+  shL: [-1.0, 0, 0.5], elL: [-1.9, 0, 0], shR: [-1.0, 0, -0.5], elR: [-1.9, 0, 0],
+};
 const frozenPose = { ...guard, spine: [-0.15, 0, 0], shL: [-0.6, 0, 0.7], shR: [-0.5, 0, -0.7] };
 
 function victoryPose(t) {
@@ -262,6 +294,8 @@ export function computePose(f) {
   switch (f.state) {
     case 'attack': return attackPose(f.move, f.attackSide, f.attackPhase);
     case 'special': return specialPose(f.def.special, f.specialPhase);
+    case 'skill': return specialPose(f.skill?.pose || 'fireball', f.specialPhase);
+    case 'dodge': return dodgePose;
     case 'block': return blockPose;
     case 'hitstun': case 'blockstun': case 'guardbreak': {
       const w = Math.sin(Math.min(1, f.stateTime / 0.12) * Math.PI * 0.5);

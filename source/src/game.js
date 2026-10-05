@@ -1,6 +1,6 @@
 // Game orchestration: renderer, fixed-step simulation, rounds and match flow.
 import * as THREE from 'three';
-import { SIM_DT, ARENA, ROSTER, PLAYER_COLORS } from './config.js';
+import { SIM_DT, ARENA, ROSTER, PLAYER_COLORS, TEAM_COLORS, cleanTeamName } from './config.js';
 import { events } from './events.js';
 import { Arena } from './arena.js';
 import { Effects } from './effects.js';
@@ -97,8 +97,8 @@ export class Game {
       this.arena.excitement += 1.2;
       this.effects.ring(fighter.pos.x, 0.1, fighter.pos.z, fighter.def.eyes, 3.2, 0.6);
       if (this.mode !== 'match') return;
-      const v = `<b style="color:${hex(fighter.def.eyes)}">${esc(fighter.name)}</b>`;
-      const k = by ? `<b style="color:${hex(by.def.eyes)}">${esc(by.name)}</b>` : '<b class="fire">The flames</b>';
+      const v = `<b style="color:${hex(fighter.teamColor ?? fighter.def.eyes)}">${esc(fighter.name)}</b>`;
+      const k = by ? `<b style="color:${hex(by.teamColor ?? by.def.eyes)}">${esc(by.name)}</b>` : '<b class="fire">The flames</b>';
       this.hud.feed(`${k} <span>defeated</span> ${v}`);
       flashScreen();
     });
@@ -125,6 +125,7 @@ export class Game {
       f.model.ring.material.dispose();
       f.model.ice.material.dispose();
       f.model.aura.material.dispose();
+      f.model.shell.material.dispose();
     }
     this.fighters = [];
     for (const p of this.projectiles) if (!p.dead) p.burst(this);
@@ -137,6 +138,7 @@ export class Game {
     this.clearFighters();
     this.mode = 'demo';
     this.online = null;
+    this.teams = null;
     this.localFighter = null;
     this.hud.show(false);
     this.rig.mode = 'orbit';
@@ -163,16 +165,33 @@ export class Game {
         : new HumanController(this.keyboard, bindings[s.control], s.control);
       return new Fighter(def, i, ctrl);
     });
+    this.applyTeams(setup.teams, setup.slots.map((s) => s.team));
     this.tintDuplicates();
     for (const f of this.fighters) this.scene.add(f.model.root);
     this.round = 0;
-    this.hud.build(this.fighters, setup.winsNeeded);
+    this.hud.build(this.fighters, setup.winsNeeded, this.teams, (f, a) => bindings[f.controller.playerIndex]?.[a]);
     this.hud.show(true);
     const humans = this.fighters.filter((f) => f.isHuman).sort((a, b) => a.controller.playerIndex - b.controller.playerIndex);
-    this.hud.setHints(humans.map((f) => Hud.controlHint(f.controller.playerIndex, bindings[f.controller.playerIndex])));
+    this.hud.setHints(humans.flatMap((f) => {
+      const b = bindings[f.controller.playerIndex];
+      return [Hud.controlHint(f.controller.playerIndex, b), Hud.skillHint(f, b, `P${f.controller.playerIndex + 1}`)];
+    }));
     this.hintUntil = 12;
     this.beginRound(false);
   }
+
+  // Team mode: `teams` is { count, names } (count 0 = free-for-all), `picks` each fighter's team.
+  applyTeams(teams, picks) {
+    const count = teams?.count || 0;
+    this.teams = count ? Array.from({ length: count }, (_, t) => ({ name: cleanTeamName(teams.names?.[t], t), color: TEAM_COLORS[t] })) : null;
+    if (!this.teams) return;
+    this.fighters.forEach((f, i) => {
+      const t = ((picks[i] ?? i) % count + count) % count;
+      f.setTeam(t, this.teams[t].name, this.teams[t].color);
+    });
+  }
+
+  get teamMode() { return !!this.teams && this.mode === 'match'; }
 
   // duplicate characters get a tint so they stay distinguishable
   tintDuplicates() {
@@ -205,13 +224,14 @@ export class Game {
       f.isYou = i === you;
       return f;
     });
+    this.applyTeams(spec.setup.teams, spec.fighters.map((s) => s.team));
     this.tintDuplicates();
     for (const f of this.fighters) this.scene.add(f.model.root);
     this.localFighter = this.fighters[you] || null;
     this.round = 0;
-    this.hud.build(this.fighters, spec.setup.winsNeeded);
+    this.hud.build(this.fighters, spec.setup.winsNeeded, this.teams, (f, a) => bindings[0]?.[a]);
     this.hud.show(true);
-    this.hud.setHints(you >= 0 ? [Hud.onlineHint(bindings)] : ['You are watching this match. You join the next one.']);
+    this.hud.setHints(you >= 0 ? [Hud.onlineHint(bindings), Hud.skillHint(this.localFighter, bindings[0], 'You')] : ['You are watching this match. You join the next one.']);
     this.hintUntil = 12;
     if (role === 'host') this.beginRound(false);
     else {
@@ -240,7 +260,9 @@ export class Game {
     const n = this.fighters.length;
     const spawnR = n <= 2 ? 4 : n <= 4 ? 6 : 7.5;
     const offset = Math.PI / 2 + (n === 2 ? 0 : Math.PI / n);
-    this.fighters.forEach((f, i) => {
+    // teammates start side by side
+    const order = this.teamMode ? [...this.fighters].sort((a, b) => a.team - b.team || a.slot - b.slot) : this.fighters;
+    order.forEach((f, i) => {
       const a = offset + (i / n) * Math.PI * 2;
       const p = new THREE.Vector3(Math.cos(a) * spawnR, 0, Math.sin(a) * spawnR);
       f.reset(p, Math.atan2(-p.x, -p.z));
@@ -249,6 +271,7 @@ export class Game {
       this.rig.mode = 'fight';
       this.rig.winner = null;
       const last = this.fighters.some((f) => f.stats.wins === this.setup.winsNeeded - 1) && this.round > 1;
+      if (this.teamMode) this.teamsAlive = new Set(this.fighters.map((f) => f.team));
       this.hud.announce(last ? `Round ${this.round} · Final` : `Round ${this.round}`, 'round', 1300);
       this.hud.setTimer('');
       events.emit('roundStart', { round: this.round, fighters: this.fighters });
@@ -296,7 +319,15 @@ export class Game {
 
     if (this.phase === 'fight') {
       const alive = this.fighters.filter((f) => f.alive);
-      if (alive.length <= 1) this.endRound(alive[0] || null);
+      if (this.teamMode) {
+        const left = new Set(alive.map((f) => f.team));
+        if (left.size > 1) {
+          // announce a team that just went down entirely
+          for (const t of this.teamsAlive) if (!left.has(t)) this.hud.feed(`<b style="color:${hex(this.teams[t].color)}">${esc(this.teams[t].name)}</b> <span>are wiped out</span>`);
+        }
+        this.teamsAlive = left;
+        if (left.size <= 1) this.endRound(alive[0] || null);
+      } else if (alive.length <= 1) this.endRound(alive[0] || null);
     } else if (this.phase === 'roundOver') {
       const w = this.roundWinner;
       if (w && w.alive && w.grounded && w.state === 'idle' && this.phaseTime > 0.6) w.setState('victory');
@@ -347,15 +378,18 @@ export class Game {
     this.phaseTime = 0;
     this.roundWinner = winner;
     this.slowmo = 1.3;
-    if (winner) winner.stats.wins++;
-    events.emit('roundEnd', { winner, round: this.round });
+    const team = this.teamMode && winner ? this.teams[winner.team] : null;
+    if (team) { for (const f of this.fighters) if (f.team === winner.team) f.stats.wins++; }
+    else if (winner) winner.stats.wins++;
+    events.emit('roundEnd', { winner, round: this.round, team: team ? team.name : null });
     if (this.mode !== 'match') return;
     this.rig.mode = 'winner';
     this.rig.winner = winner;
     this.rig.orbitAngle = this.rig.yaw;
     if (winner) {
       const done = winner.stats.wins >= this.setup.winsNeeded;
-      this.hud.announce(done ? `${winner.name} wins` : `${winner.name} takes the round`, 'win', 3000);
+      const who = team ? team.name : winner.name;
+      this.hud.announce(done ? `${who} ${team ? 'win' : 'wins'}` : `${who} ${team ? 'take' : 'takes'} the round`, 'win', 3000);
     } else {
       this.hud.announce('Double K.O.', 'win', 3000);
     }

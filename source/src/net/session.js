@@ -4,14 +4,14 @@
 // the match from the host's snapshots, slightly in the past so motion stays smooth.
 // Visual effects, announcer lines and gameplay events are replayed on the same
 // timeline, so a client also hears every `events` emit the audio pass listens to.
-import { ROSTER, MOVES } from '../config.js';
+import { ROSTER, MOVES, SKILLS, SKILL_IDS, TEAM_COUNTS, TEAM_DEFAULT_NAMES, cleanTeamName } from '../config.js';
 import { AIController } from '../ai.js';
 import { OnlineKeyboardController, NetController, NET_TAPS } from '../input.js';
 import { Projectile } from '../specials.js';
 import { events } from '../events.js';
 import { createTransport, TransportError } from './transport.js';
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 export const MAX_PLAYERS = 8;
 export const ONLINE_COLORS = ['#ff6b3d', '#3db8ff', '#7dff6b', '#ffd23d', '#ff6bd5', '#b38bff', '#4ff0d8', '#f2f2f2'];
 const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -20,17 +20,19 @@ const INPUT_HZ = 60;
 const INTERP_DELAY = 0.1;     // seconds a client draws behind the host
 const PEER_TIMEOUT = 10000;   // ms without any message before the host drops a player
 
-const STATES = ['idle', 'attack', 'special', 'block', 'blockstun', 'hitstun', 'guardbreak', 'frozen', 'knockdown', 'getup', 'victory', 'ko'];
+const STATES = ['idle', 'attack', 'special', 'block', 'blockstun', 'hitstun', 'guardbreak', 'frozen', 'knockdown', 'getup', 'victory', 'ko', 'dodge', 'skill'];
 const PHASES = ['idle', 'intro', 'fight', 'roundOver', 'matchOver'];
 const MOVE_NAMES = Object.keys(MOVES);
 const PROJECTILES = {
   fireball: { color: 0xff7a1c, glow: 0xff5a00 },
   spear: { color: 0xc0c4cc },
 };
+for (const id of SKILL_IDS) if (SKILLS[id].type === 'bolt') PROJECTILES[id] = { color: SKILLS[id].color, glow: SKILLS[id].glow, size: SKILLS[id].size };
 const PROJ_KINDS = Object.keys(PROJECTILES);
 const FX = ['sparks', 'impact', 'dust', 'puff', 'streak', 'ring', 'cone', 'telegraph', 'lightning'];
 const SYNC_EVENTS = ['hit', 'block', 'guardBreak', 'ko', 'swing', 'specialStart', 'special', 'specialFail', 'thunder',
-  'spearPull', 'jump', 'land', 'wallHit', 'roundStart', 'fight', 'suddenDeath', 'roundEnd', 'matchEnd'];
+  'spearPull', 'jump', 'land', 'wallHit', 'roundStart', 'fight', 'suddenDeath', 'roundEnd', 'matchEnd',
+  'skillStart', 'skill', 'skillFail', 'dodge', 'dodgeFail', 'exhausted', 'shieldBreak'];
 const SETTINGS_KEY = 'battle-arena.online.v1';
 
 const r2 = (v) => Math.round(v * 100) / 100;
@@ -130,8 +132,8 @@ export class NetSession {
     this.heard = new Map();
     this.lobby = {
       code, inMatch: false,
-      rules: { count: 4, winsNeeded: 2, difficulty: 'normal', suddenDeath: 75 },
-      members: [{ id: 'host', name: cleanName(this.settings.name), fighter: this.settings.fighter, color: 0 }],
+      rules: { count: 4, winsNeeded: 2, difficulty: 'normal', suddenDeath: 75, teams: 0, teamNames: [...TEAM_DEFAULT_NAMES] },
+      members: [{ id: 'host', name: cleanName(this.settings.name), fighter: this.settings.fighter, color: 0, team: 0 }],
     };
     transport.onMessage = (id, msg, ch) => this.hostReceive(id, msg, ch);
     transport.onPeerJoin = (id) => { this.heard.set(id, performance.now()); };
@@ -156,7 +158,7 @@ export class NetSession {
         let name = cleanName(msg.name);
         const names = new Set(this.lobby.members.map((m) => m.name.toLowerCase()));
         for (let n = 2; names.has(name.toLowerCase()); n++) name = `${cleanName(msg.name).slice(0, 13)} ${n}`;
-        this.lobby.members.push({ id, name, fighter, color });
+        this.lobby.members.push({ id, name, fighter, color, team: this.smallestTeam() });
         this.lobby.rules.count = Math.max(this.lobby.rules.count, this.lobby.members.length);
         this.transport.send(id, { t: 'welcome', id, lobby: this.lobby });
         if (this.lobby.inMatch) this.transport.send(id, { t: 'start', spec: this.spec, you: -1 });
@@ -167,6 +169,12 @@ export class NetSession {
       case 'pick':
         if (member && Number.isInteger(msg.fighter) && msg.fighter >= -1 && msg.fighter < ROSTER.length) {
           member.fighter = msg.fighter;
+          this.broadcastLobby();
+        }
+        break;
+      case 'team':
+        if (member && Number.isInteger(msg.team) && msg.team >= 0 && msg.team < 4) {
+          member.team = msg.team % Math.max(2, this.lobby.rules.teams);
           this.broadcastLobby();
         }
         break;
@@ -222,7 +230,34 @@ export class NetSession {
     if (key === 'wins') r.winsNeeded = Math.min(5, Math.max(1, r.winsNeeded + d));
     if (key === 'diff') r.difficulty = cyc(['easy', 'normal', 'hard', 'brutal'], r.difficulty);
     if (key === 'sudden') r.suddenDeath = cyc([0, 45, 60, 75, 90, 120], r.suddenDeath);
+    if (key === 'teams') {
+      r.teams = cyc(TEAM_COUNTS, r.teams);
+      if (r.teams) this.lobby.members.forEach((m, i) => { if (!(m.team < r.teams)) m.team = i % r.teams; });
+    }
     this.broadcastLobby();
+  }
+
+  // Team with the fewest people in the lobby (where a newcomer or a CPU goes).
+  smallestTeam(extra = []) {
+    const n = Math.max(2, this.lobby.rules.teams || 2);
+    const sizes = Array(n).fill(0);
+    for (const m of [...this.lobby.members, ...extra]) if (m.team >= 0) sizes[m.team % n]++;
+    return sizes.indexOf(Math.min(...sizes));
+  }
+
+  setTeamName(i, name, final) {
+    if (!this.isHost) return;
+    this.lobby.rules.teamNames[i] = final ? cleanTeamName(name, i) : String(name).slice(0, 18);
+    this.broadcastLobby();
+  }
+
+  pickTeam(d) {
+    const n = Math.max(2, this.lobby?.rules.teams || 2);
+    const me = this.lobby?.members.find((m) => m.id === this.myId);
+    if (!me) return;
+    me.team = (((me.team || 0) % n) + d + n) % n;
+    if (this.isHost) this.broadcastLobby();
+    else { this.transport.sendHost({ t: 'team', team: me.team }); this.onLobby(); }
   }
 
   pickFighter(d) {
@@ -246,9 +281,19 @@ export class NetSession {
     const { rules, members } = this.lobby;
     const count = Math.max(rules.count, members.length, 2);
     const pick = (f) => (f >= 0 ? f : Math.floor(Math.random() * ROSTER.length));
-    const fighters = members.map((m) => ({ def: pick(m.fighter), pname: m.name, color: ONLINE_COLORS[m.color], owner: m.id }));
-    while (fighters.length < count) fighters.push({ def: pick(-1), pname: null, color: null, owner: null });
-    this.spec = { setup: { winsNeeded: rules.winsNeeded, suddenDeath: rules.suddenDeath, difficulty: rules.difficulty }, fighters };
+    const tc = rules.teams || 0;
+    const fighters = members.map((m) => ({ def: pick(m.fighter), pname: m.name, color: ONLINE_COLORS[m.color], owner: m.id, team: tc ? m.team % tc : -1 }));
+    while (fighters.length < count) {
+      const cpu = { def: pick(-1), pname: null, color: null, owner: null, team: -1 };
+      if (tc) {
+        const sizes = Array(tc).fill(0);
+        for (const f of fighters) sizes[f.team]++;
+        cpu.team = sizes.indexOf(Math.min(...sizes));
+      }
+      fighters.push(cpu);
+    }
+    const teams = { count: tc, names: rules.teamNames.slice(0, tc).map((n, i) => cleanTeamName(n, i)) };
+    this.spec = { setup: { winsNeeded: rules.winsNeeded, suddenDeath: rules.suddenDeath, difficulty: rules.difficulty, teams }, fighters };
     this.controllers = new Map();
     const ctrls = fighters.map((f) => {
       if (f.owner === 'host') return new OnlineKeyboardController(this.keyboard, this.bindings, () => !!this.menus.active);
@@ -324,6 +369,8 @@ export class NetSession {
         (f.alive ? 1 : 0) | (f.grounded ? 2 : 0) | (f.model.ice.visible ? 4 : 0) | (f.armor > 0 ? 8 : 0) | (f.hitstop > 0 ? 16 : 0),
         f.moveName ? MOVE_NAMES.indexOf(f.moveName) : -1, r2(f.attackPhase), f.attackSide, r2(f.specialPhase),
         r2(f.moveAmount), r2(f.runPhase), r2(Math.max(0, f.invuln)), f.stats.wins, f.stats.kos, Math.round(f.stats.damage),
+        Math.round(f.stamina), r2(f.cooldowns[0]), r2(f.cooldowns[1]), Math.round(f.shield), f.skillId ? SKILL_IDS.indexOf(f.skillId) : -1,
+        (f.armor > 0 || f.power > 0 || f.lifesteal > 0 ? 1 : 0) | (f.vanish > 0 ? 2 : 0) | (f.exhausted ? 4 : 0) | (f.haste > 0 ? 8 : 0) | (f.slow > 0 ? 16 : 0) | (f.sprinting ? 32 : 0),
       ]),
       p: g.projectiles.filter((p) => !p.dead).map((p) => [p.id, PROJ_KINDS.indexOf(p.kind), r2(p.pos.x), r2(p.pos.y), r2(p.pos.z), r2(p.dir.x), r2(p.dir.z), p.owner.slot]),
     };
@@ -403,7 +450,7 @@ export class NetSession {
     this.lastRound = -1;
     this.lastPhase = -1;
     this.clientProjectiles = new Map();
-    this.input = { ctl: new OnlineKeyboardController(this.keyboard, this.bindings, () => !!this.menus.active), counts: [0, 0, 0, 0], seq: 0, acc: 1 };
+    this.input = { ctl: new OnlineKeyboardController(this.keyboard, this.bindings, () => !!this.menus.active), counts: NET_TAPS.map(() => 0), seq: 0, acc: 1 };
     this.game.net = this;
     this.menus.hideAll();
     this.game.startOnline(spec, 'client', null, you, this.bindings);
@@ -450,7 +497,7 @@ export class NetSession {
     inp.acc += dt;
     if (!tapped && inp.acc < 1 / INPUT_HZ) return;
     inp.acc = 0;
-    this.transport.sendHost({ t: 'in', s: ++inp.seq, mx: r2(it.mx), mz: r2(it.mz), b: it.block ? 1 : 0, c: inp.counts }, 'rt');
+    this.transport.sendHost({ t: 'in', s: ++inp.seq, mx: r2(it.mx), mz: r2(it.mz), b: it.block ? 1 : 0, d: it.dashHeld ? 1 : 0, c: inp.counts }, 'rt');
   }
 
   applySnap(a, b, t, dt) {
@@ -489,8 +536,6 @@ export class NetSession {
       f.grounded = !!(flags & 2);
       f.model.ice.visible = !!(flags & 4);
       f.armor = flags & 8 ? 1 : 0;
-      f.model.aura.visible = !!(flags & 8);
-      if (f.model.aura.visible) f.model.aura.material.opacity = 0.14 + Math.sin(f.animTime * 14) * 0.06;
       f.moveName = MOVE_NAMES[fa[10]] || null;
       f.move = f.moveName ? MOVES[f.moveName] : null;
       f.attackPhase = sameState && fa[10] === fb[10] ? lerp(fa[11], fb[11], t) : fa[11];
@@ -500,6 +545,19 @@ export class NetSession {
       f.runPhase = fb[15] >= fa[15] ? lerp(fa[15], fb[15], t) : fb[15];
       f.invuln = fa[16];
       f.stats.wins = fa[17]; f.stats.kos = fa[18]; f.stats.damage = fa[19];
+      f.stamina = lerp(num(fa[20], 100), num(fb[20], 100), t);
+      f.cooldowns[0] = num(fa[21]); f.cooldowns[1] = num(fa[22]);
+      f.shield = num(fa[23]);
+      f.skillId = SKILL_IDS[fa[24]] || null;
+      f.skill = f.skillId ? SKILLS[f.skillId] : null;
+      const buffs = num(fa[25]);
+      f.power = buffs & 1 ? 1 : 0;
+      f.vanish = buffs & 2 ? 1 : 0;
+      f.exhausted = !!(buffs & 4);
+      f.haste = buffs & 8 ? 1 : 0;
+      f.slow = buffs & 16 ? 1 : 0;
+      f.sprinting = !!(buffs & 32);
+      f.updateBuffVisuals();
       f.syncVisual(flags & 16 ? 0 : dt);
     });
     // projectiles: create, move and retire to match the host
@@ -514,7 +572,7 @@ export class NetSession {
         const style = PROJECTILES[kind];
         const ownerF = g.fighters[owner];
         if (!style || !ownerF) continue;
-        proj = new Projectile(g, ownerF, { kind, x, y, z, dx, dz, speed: 0, life: Infinity, radius: 0, color: style.color, glow: style.glow, hit: null });
+        proj = new Projectile(g, ownerF, { kind, x, y, z, dx, dz, speed: 0, life: Infinity, radius: 0, color: style.color, glow: style.glow, size: style.size, hit: null });
         this.clientProjectiles.set(id, proj);
       }
       const q = prev.get(id) || p;

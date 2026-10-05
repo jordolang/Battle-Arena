@@ -59,6 +59,32 @@ kbd {
 .card.ready .bar.en .fill { background: linear-gradient(90deg, #7fb1ff, #c8e0ff); box-shadow: 0 0 6px #8fb8ff; }
 .bar.en .notch { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; background: rgba(0, 0, 0, 0.7); }
 @keyframes pulse { to { filter: brightness(1.4); } }
+.bar.hp .shield { background: linear-gradient(180deg, rgba(220, 245, 255, 0.95), rgba(140, 210, 255, 0.8)); transform: scaleX(0); mix-blend-mode: screen; }
+.bar.st { height: 3px; margin-top: 2px; }
+.bar.st .fill { background: linear-gradient(90deg, #7fd36a, #d6f07a); }
+.card.tired .bar.st { background: rgba(255, 70, 50, 0.35); animation: pulse 0.35s infinite alternate; }
+.card.tired .bar.st .fill { background: #ff6a4a; }
+.card.teamed { border-top-color: var(--tc); box-shadow: inset 3px 0 0 var(--tc); }
+.card.player { width: clamp(160px, 14vw, 200px); }
+.chips { display: flex; gap: 3px; margin-top: 4px; }
+.chip {
+  position: relative; flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+  font-size: 10px; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ash); line-height: 1.5; text-align: center;
+  padding: 0 3px; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 2px; background: rgba(0, 0, 0, 0.3);
+}
+.chip b { color: var(--bone); margin-right: 2px; font-weight: 700; }
+.chip b:empty { display: none; }
+.chip .cd { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.62); transform-origin: bottom; transform: scaleY(0); }
+.chip.ready { color: #c8e0ff; border-color: rgba(143, 184, 255, 0.55); }
+.chip.off { opacity: 0.55; }
+#teams { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 22px; margin-bottom: 4px; }
+.team-score {
+  display: flex; align-items: center; gap: 8px; padding: 2px 12px; border-bottom: 2px solid var(--tc);
+  background: linear-gradient(180deg, rgba(10, 8, 9, 0.0), rgba(10, 8, 9, 0.55)); transition: opacity 0.4s;
+}
+.team-score.out { opacity: 0.4; }
+.team-name { font-weight: 700; font-size: 16px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--tc); text-shadow: 0 1px 2px #000; }
+.tag.teamed span { border-bottom: 2px solid var(--tc); }
 
 #timer {
   font-family: var(--display); font-size: 40px; line-height: 1.1; color: var(--bone); text-shadow: 0 2px 0 #000, 0 0 18px rgba(255, 120, 40, 0.4);
@@ -173,6 +199,13 @@ button { font: inherit; color: inherit; }
 .slot-n { align-self: center; color: var(--ash); font-variant-numeric: tabular-nums; text-align: right; }
 .slot .who { padding: 6px 8px; font-weight: 700; letter-spacing: 0.06em; border-left: 2px solid transparent; font-size: 16px; color: var(--ash); }
 .slot .fighter { padding: 5px 10px; border-left: 2px solid var(--fc); display: flex; flex-direction: column; min-width: 0; }
+.slots.teamed .slot { grid-template-columns: 22px 104px minmax(0, 1fr) minmax(0, 150px); }
+.slot .team { padding: 5px 8px; border-left: 3px solid var(--tc); color: var(--tc); font-weight: 700; font-size: 14px; letter-spacing: 0.05em; text-transform: uppercase; text-align: left; min-width: 0; }
+.slot .team span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-names { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
+.team-names .col-h { margin-bottom: 0; }
+.team-field .lbl { color: var(--tc); }
+.team-field input { font-size: 18px; padding: 4px 8px; border-left: 3px solid var(--tc); }
 .fname { font-weight: 700; font-size: 18px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--fc); }
 .ftitle { font-size: 13px; color: var(--ash); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .setup-note { color: var(--ash); font-size: 15px; margin: 16px 0 0; }
@@ -212,6 +245,7 @@ button { font: inherit; color: inherit; }
   .card { width: calc(25% - 6px); min-width: 0; padding: 4px 5px; }
   .card .nm { font-size: 13px; }
   .card .who { display: none; }
+  .chips { display: none; }
   #feed { top: auto; bottom: 70px; }
 }
 @media (prefers-reduced-motion: reduce) {
@@ -260,6 +294,8 @@ button { font: inherit; color: inherit; }
 .waiting { align-self: center; color: var(--ash); font-size: 17px; letter-spacing: 0.04em; }
 .tag.you span { color: var(--gold); font-size: 16px; }
 .net-slots .slot { grid-template-columns: 22px minmax(0, 150px) minmax(0, 1fr); }
+.net-slots.teamed .slot { grid-template-columns: 22px minmax(0, 120px) minmax(0, 1fr) minmax(0, 150px); }
+.team-static .lbl { color: var(--tc); }
 .net-slots .who { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
 .net-slots .who span { overflow: hidden; text-overflow: ellipsis; }
 .net-slots .who small { font-size: 12px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); font-weight: 600; }

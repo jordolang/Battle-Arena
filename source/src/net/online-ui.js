@@ -1,6 +1,7 @@
 // Screens for online play: host or join a room, the room lobby, the in-match
 // menu and the results buttons. Plugs into Menus through its onAct/onOpt/onShow hooks.
-import { ROSTER, SPECIALS, DIFFICULTY } from '../config.js';
+import { ROSTER, DIFFICULTY, TEAM_COLORS, cleanTeamName } from '../config.js';
+import { moveSummary } from '../ui.js';
 import { ONLINE_COLORS, MAX_PLAYERS, cleanCode, cleanName, saveOnlineSettings } from './session.js';
 
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -25,6 +26,20 @@ export class OnlineMenus {
     this.nameInput.addEventListener('input', () => {
       session.settings.name = this.nameInput.value;
       saveOnlineSettings(session.settings);
+    });
+    // the host's team name fields are rebuilt only when the number of teams changes, so typing keeps focus
+    this.teamNamesEl = document.createElement('div');
+    this.teamNamesEl.className = 'team-names';
+    this.lobbyEl.querySelector('.net-rules').after(this.teamNamesEl);
+    this.teamNamesEl.addEventListener('input', (e) => {
+      const i = +e.target.dataset.team;
+      if (Number.isInteger(i)) session.setTeamName(i, e.target.value, false);
+    });
+    this.teamNamesEl.addEventListener('focusout', (e) => {
+      const i = +e.target.dataset.team;
+      if (!Number.isInteger(i)) return;
+      e.target.value = cleanTeamName(e.target.value, i);
+      session.setTeamName(i, e.target.value, true);
     });
     this.codeInput.addEventListener('input', () => {
       const v = cleanCode(this.codeInput.value);
@@ -100,6 +115,7 @@ export class OnlineMenus {
     const s = this.session;
     if (!s.connected) return;
     if (key === 'net-fighter') s.pickFighter(d);
+    else if (key === 'net-team') s.pickTeam(d);
     else if (s.isHost && key.startsWith('net-')) s.setRule(key.slice(4), d);
     this.renderLobby(true);
   }
@@ -122,7 +138,7 @@ export class OnlineMenus {
     if (!L) return;
     const el = this.lobbyEl;
     const focused = document.activeElement;
-    const focusKey = keepFocus && el.contains(focused) ? `${focused.dataset.opt || ''}|${focused.dataset.act || ''}` : null;
+    const focusKey = keepFocus && el.contains(focused) && !this.teamNamesEl.contains(focused) ? `${focused.dataset.opt || ''}|${focused.dataset.act || ''}` : null;
 
     el.querySelector('.room-code').textContent = L.code;
     const link = /^https?:$/.test(location.protocol) ? `${location.origin}${location.pathname}?room=${L.code}` : '';
@@ -137,7 +153,23 @@ export class OnlineMenus {
       ['wins', 'Rounds to win', r.winsNeeded],
       ['diff', 'CPU skill', DIFFICULTY[r.difficulty]?.label || r.difficulty],
       ['sudden', 'Sudden death', r.suddenDeath ? `after ${r.suddenDeath}s` : 'Off'],
+      ['teams', 'Teams', r.teams ? `${r.teams} teams` : 'Free-for-all'],
     ];
+    const tc = r.teams || 0;
+    const teamName = (t) => cleanTeamName(r.teamNames?.[t], t);
+    if (s.isHost) {
+      if (this.teamNamesCount !== tc) {
+        this.teamNamesCount = tc;
+        this.teamNamesEl.innerHTML = tc ? `<div class="col-h">Team names</div>${Array.from({ length: tc }, (_, i) => `
+          <label class="field team-field" style="--tc:${hex(TEAM_COLORS[i])}"><span class="lbl">Team ${i + 1}</span>
+          <input class="nav" data-team="${i}" maxlength="18" autocomplete="off" spellcheck="false" value="${esc(teamName(i))}"></label>`).join('')}` : '';
+      }
+    } else {
+      this.teamNamesCount = -1;
+      this.teamNamesEl.innerHTML = tc ? `<div class="col-h">Teams</div>${Array.from({ length: tc }, (_, i) =>
+        `<div class="row static team-static" style="--tc:${hex(TEAM_COLORS[i])}"><span class="lbl">Team ${i + 1}</span><span class="val">${esc(teamName(i))}</span></div>`).join('')}` : '';
+    }
+    this.teamNamesEl.hidden = !tc;
     el.querySelector('.net-rules').innerHTML = ruleRows.map(([k, label, v]) => s.isHost
       ? `<button class="nav opt row" data-opt="net-${k}"><span class="lbl">${label}</span><span class="val"><i>‹</i>${esc(v)}<i>›</i></span></button>`
       : `<div class="row static"><span class="lbl">${label}</span><span class="val">${esc(v)}</span></div>`).join('');
@@ -151,15 +183,23 @@ export class OnlineMenus {
       const color = m ? ONLINE_COLORS[m.color] : '';
       const who = m ? `<span style="color:${color}">${esc(m.name)}</span>${mine ? '<small>You</small>' : ''}` : '<span>CPU</span>';
       const fname = m ? (def ? esc(def.name) : 'Random') : 'Random';
-      const ftitle = def ? `${esc(def.title)} · ${esc(SPECIALS[def.special].label)}` : m ? 'Any of the eight' : 'Fills the empty seat';
+      const ftitle = def ? `${esc(def.title)} · ${esc(moveSummary(def))}` : m ? 'Any of the eight' : 'Fills the empty seat';
       const inner = `<span class="fname">${fname}</span><span class="ftitle">${ftitle}</span>`;
+      let team = '';
+      if (tc) {
+        const t = m ? (m.team || 0) % tc : -1;
+        const label = t >= 0 ? `<span>${esc(teamName(t))}</span>` : '<span>Auto</span>';
+        const style = `style="--tc:${t >= 0 ? hex(TEAM_COLORS[t]) : '#888'}"`;
+        team = mine ? `<button class="nav opt team" data-opt="net-team" ${style}>${label}</button>` : `<div class="team" ${style}>${label}</div>`;
+      }
       rows.push(`<div class="slot" style="--fc:${def ? hex(def.eyes) : '#888'}">
         <span class="slot-n">${i + 1}</span>
         <div class="who">${who}</div>
-        ${mine ? `<button class="nav opt fighter" data-opt="net-fighter">${inner}</button>` : `<div class="fighter">${inner}</div>`}
+        ${mine ? `<button class="nav opt fighter" data-opt="net-fighter">${inner}</button>` : `<div class="fighter">${inner}</div>`}${team}
       </div>`);
     }
     el.querySelector('.net-slots').innerHTML = rows.join('');
+    el.querySelector('.net-slots').classList.toggle('teamed', !!tc);
 
     const humans = L.members.length;
     el.querySelector('.net-note').textContent = L.inMatch

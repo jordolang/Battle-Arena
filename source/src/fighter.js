@@ -1,14 +1,17 @@
 // Fighter simulation: state machine, movement, attacks and taking hits.
 import * as THREE from 'three';
-import { MOVES, SPECIALS, BASE_SPEED, GRAVITY, ENERGY_MAX, SPECIAL_COST, GUARD_MAX, PLAYER_COLORS } from './config.js';
-import { buildFighterModel, computePose, applyPose } from './fighterModel.js';
-import { executeSpecial } from './specials.js';
+import { MOVES, SPECIALS, SKILLS, BASE_SPEED, GRAVITY, ENERGY_MAX, SPECIAL_COST, GUARD_MAX, PLAYER_COLORS,
+  STAMINA, STAMINA_MAX, DODGE } from './config.js';
+import { buildFighterModel, computePose, applyPose, applyTeamOutfit } from './fighterModel.js';
+import { executeSpecial, executeSkill } from './specials.js';
 
 const FREE_STATES = new Set(['idle']);
 const TAU = Math.PI * 2;
 
 export function angleTo(ax, az, bx, bz) { return Math.atan2(bx - ax, bz - az); }
 export function wrapAngle(a) { a = (a + Math.PI) % TAU; if (a < 0) a += TAU; return a - Math.PI; }
+// Teammates never hurt or target each other. Fighters without a team (free-for-all) have team -1.
+export function allies(a, b) { return !!a && !!b && a !== b && a.team >= 0 && a.team === b.team; }
 
 let nextId = 1;
 
@@ -25,7 +28,21 @@ export class Fighter {
     this.pos = new THREE.Vector3();
     this.vel = new THREE.Vector3();
     this.stats = { kos: 0, damage: 0, wins: 0 };
+    this.team = -1;
+    this.teamName = '';
+    this.teamColor = null;
+    this.skillIds = def.skills || [];
+    const shieldSkill = this.skillIds.map((id) => SKILLS[id]).find((sk) => sk?.type === 'shield');
+    if (shieldSkill) this.model.shell.material.color.setHex(shieldSkill.color);
     this.reset(new THREE.Vector3(), 0);
+  }
+
+  // Team outfit: gi dyed in the team colour, team pauldrons and a team-coloured floor ring.
+  setTeam(index, name, color) {
+    this.team = index;
+    this.teamName = name;
+    this.teamColor = color;
+    applyTeamOutfit(this.model, color);
   }
 
   get isHuman() { return !!this.controller?.isHuman; }
@@ -68,6 +85,24 @@ export class Fighter {
     this.airAttackUsed = false;
     this.fallAngle = 0;
     this.guardRegenDelay = 0;
+    this.stamina = STAMINA_MAX;
+    this.staminaDelay = 0;
+    this.exhausted = false;
+    this.sprinting = false;
+    this.cooldowns = [0, 0];
+    this.skill = null;
+    this.skillId = null;
+    this.skillIdx = -1;
+    this.shield = 0;
+    this.shieldTime = 0;
+    this.haste = 0;
+    this.power = 0;
+    this.lifesteal = 0;
+    this.vanish = 0;
+    this.slow = 0;
+    this.healLeft = 0;
+    this.healRate = 0;
+    this.poisonColor = 0x9dff3a;
     this.intent = { mx: 0, mz: 0, block: false };
     this.model.root.position.copy(pos);
     this.model.root.rotation.y = facing;
@@ -75,6 +110,8 @@ export class Fighter {
     this.model.body.position.y = 0;
     this.model.ice.visible = false;
     this.model.aura.visible = false;
+    this.model.shell.visible = false;
+    this.model.body.visible = true;
     this.model.ring.visible = true;
     this.model.root.visible = true;
   }
@@ -91,7 +128,7 @@ export class Fighter {
   findTarget(world, range, maxAngle, dirAngle = this.facing) {
     let best = null, bestScore = Infinity;
     for (const o of world.fighters) {
-      if (o === this || !o.alive) continue;
+      if (o === this || !o.alive || allies(this, o) || o.vanish > 0) continue;
       const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z;
       const d = Math.hypot(dx, dz);
       if (d > range) continue;
@@ -131,6 +168,8 @@ export class Fighter {
       case 'attack': this.tickAttack(dt, world); break;
       case 'special': this.tickSpecial(dt, world); break;
       case 'block': this.tickBlock(dt, world); break;
+      case 'dodge': this.tickDodge(dt, world); break;
+      case 'skill': this.tickSkill(dt, world); break;
       case 'blockstun': case 'hitstun': case 'guardbreak': case 'frozen':
         if (this.stateTime >= this.stateDuration) {
           if (this.state === 'frozen') this.model.ice.visible = false;
@@ -153,21 +192,50 @@ export class Fighter {
 
   updateStatus(dt, world) {
     // passive meters
-    this.energy = Math.min(ENERGY_MAX, this.energy + dt * 2.2);
+    this.energy = Math.min(ENERGY_MAX, this.energy + dt * 3.2);
     if (this.state !== 'block' && this.state !== 'blockstun') {
       this.guardRegenDelay -= dt;
       if (this.guardRegenDelay <= 0) this.guard = Math.min(GUARD_MAX, this.guard + dt * 22);
     }
-    if (this.armor > 0) {
-      this.armor -= dt;
-      this.model.aura.visible = this.armor > 0;
-      if (this.model.aura.visible) this.model.aura.material.opacity = 0.14 + Math.sin(this.animTime * 14) * 0.06;
+    // stamina: sprinting drains it, everything else pauses the refill for a moment
+    if (this.sprinting) this.spendStamina(STAMINA.sprint * dt, world);
+    else if (this.staminaDelay > 0) this.staminaDelay -= dt;
+    else {
+      const blocking = this.state === 'block' || this.state === 'blockstun';
+      const rate = (blocking ? STAMINA.regenBlocking : STAMINA.regen) * (this.haste > 0 ? 2 : 1);
+      this.stamina = Math.min(STAMINA_MAX, this.stamina + rate * dt);
     }
+    if (this.exhausted && this.stamina >= STAMINA.recoverAt) this.exhausted = false;
+    for (let i = 0; i < 2; i++) if (this.cooldowns[i] > 0) this.cooldowns[i] = Math.max(0, this.cooldowns[i] - dt);
+    // timed effects
+    if (this.armor > 0) this.armor -= dt;
+    if (this.power > 0) this.power -= dt;
+    if (this.lifesteal > 0) this.lifesteal -= dt;
+    if (this.vanish > 0) this.vanish -= dt;
+    if (this.slow > 0) {
+      this.slow -= dt;
+      if (Math.random() < dt * 8) world.effects.sparks(this.pos.x, 0.5, this.pos.z, 0x9fe8ff, 1, 1);
+    }
+    if (this.haste > 0) {
+      this.haste -= dt;
+      if (Math.random() < dt * 14) world.effects.trail(this.pos.x, 0.25, this.pos.z, 0xc6ff4a);
+    }
+    if (this.shieldTime > 0) {
+      this.shieldTime -= dt;
+      if (this.shieldTime <= 0) this.shield = 0;
+    }
+    if (this.healLeft > 0) {
+      const h = Math.min(this.healLeft, this.healRate * dt);
+      this.healLeft -= h;
+      this.hp = Math.min(this.maxHp, this.hp + h);
+      if (Math.random() < dt * 10) world.effects.sparks(this.pos.x, 1.0, this.pos.z, 0xffd27a, 2, 2);
+    }
+    this.updateBuffVisuals();
     if (this.poison > 0) {
       const tick = Math.min(this.poison, dt);
       this.poison -= tick;
       this.applyDamage(tick * 2.4, this.poisonBy, world, true);
-      if (Math.random() < dt * 12) world.effects.sparks(this.pos.x, 1.2, this.pos.z, 0x9dff3a, 2, 1.5);
+      if (Math.random() < dt * 12) world.effects.sparks(this.pos.x, 1.2, this.pos.z, this.poisonColor, 2, 1.5);
     }
     // fire ring (sudden death)
     if (world.ringRadius < 30) {
@@ -179,11 +247,39 @@ export class Fighter {
     }
   }
 
+  // Aura, shield shell and vanish flicker follow the timed effects. Online clients call this too.
+  updateBuffVisuals() {
+    const m = this.model;
+    m.aura.visible = this.alive && (this.armor > 0 || this.power > 0 || this.lifesteal > 0);
+    if (m.aura.visible) m.aura.material.opacity = 0.14 + Math.sin(this.animTime * 14) * 0.06;
+    m.shell.visible = this.alive && this.shield > 0;
+    if (m.shell.visible) m.shell.material.opacity = 0.16 + Math.sin(this.animTime * 6) * 0.05;
+    m.body.visible = !(this.vanish > 0) || Math.sin(this.animTime * 40) > 0.85;
+  }
+
+  // Damage multiplier for everything this fighter deals.
+  dmgMult() {
+    return this.def.power * (this.armor > 0 ? 1.25 : 1) * (this.power > 0 ? 1.3 : 1) * (this.exhausted ? STAMINA.exhaustedDamage : 1);
+  }
+
+  spendStamina(n, world) {
+    this.stamina -= n;
+    this.staminaDelay = STAMINA.delay;
+    if (this.stamina <= 0) {
+      this.stamina = 0;
+      this.sprinting = false;
+      if (!this.exhausted) {
+        this.exhausted = true;
+        world.events.emit('exhausted', { fighter: this });
+      }
+    }
+  }
+
   readInput(world) {
     const intent = this.controller ? this.controller.getIntent(this, world) : null;
-    if (!intent || world.locked) { this.intent = { mx: 0, mz: 0, block: false }; this.buffer = null; return; }
+    if (!intent || world.locked) { this.intent = { mx: 0, mz: 0, block: false }; this.buffer = null; this.sprinting = false; return; }
     this.intent = intent;
-    for (const a of ['special', 'punch', 'kick', 'jump']) {
+    for (const a of ['dash', 'special', 'skill1', 'skill2', 'punch', 'kick', 'jump']) {
       if (intent[a]) { this.buffer = { action: a, time: world.time }; break; }
     }
     if (this.buffer && world.time - this.buffer.time > 0.22) this.buffer = null;
@@ -193,15 +289,19 @@ export class Fighter {
 
   tickFree(dt, world) {
     const it = this.intent;
-    if (it.block && this.grounded) { this.setState('block'); return; }
     const action = this.buffer?.action;
+    if (action === 'dash' && this.grounded) { this.consumeBuffer(); if (this.startDodge(world)) return; }
+    if (it.block && this.grounded) { this.setState('block'); return; }
     if (action) {
       if (action === 'jump') {
         this.consumeBuffer();
         if (this.grounded) {
           this.vel.y = 9.2; this.grounded = false; this.airAttackUsed = false;
+          this.spendStamina(STAMINA.jump, world);
           world.events.emit('jump', { fighter: this });
         }
+      } else if (action === 'skill1' || action === 'skill2') {
+        if (this.grounded) { this.consumeBuffer(); if (this.startSkill(action === 'skill1' ? 0 : 1, world)) return; }
       } else if (action === 'punch' || action === 'kick') {
         if (this.grounded) { this.consumeBuffer(); this.startAttack(action === 'punch' ? 'jab1' : 'kick1', world); return; }
         if (!this.airAttackUsed && this.pos.y > 0.4) { this.consumeBuffer(); this.airAttackUsed = true; this.startAttack('airkick', world); return; }
@@ -211,8 +311,9 @@ export class Fighter {
         world.events.emit('specialFail', { fighter: this });
       }
     }
-    // movement and facing
+    // movement and facing; holding dash while moving sprints
     const len = Math.hypot(it.mx, it.mz);
+    this.sprinting = !!it.dashHeld && len > 0.1 && this.grounded && !this.exhausted && this.stamina > 0;
     if (len > 0.1) {
       const want = Math.atan2(it.mx, it.mz);
       this.facing += wrapAngle(want - this.facing) * Math.min(1, dt * 14);
@@ -223,7 +324,9 @@ export class Fighter {
     const move = MOVES[name];
     this.move = move;
     this.moveName = name;
+    this.sprinting = false;
     this.setState('attack');
+    this.spendStamina(move.stamina || 0, world);
     this.hitSet.clear();
     this.attackSide = name === 'jab1' || name === 'kick1' || name === 'hook' ? 1 : name === 'jab2' || name === 'kick2' ? -1 : 1;
     // soft lock-on toward whoever is closest in front (or in the input direction)
@@ -281,9 +384,9 @@ export class Fighter {
 
   checkHits(world) {
     const m = this.move;
-    const power = this.def.power * (this.armor > 0 ? 1.25 : 1);
+    const power = this.dmgMult();
     for (const o of world.fighters) {
-      if (o === this || !o.alive || this.hitSet.has(o.id)) continue;
+      if (o === this || !o.alive || this.hitSet.has(o.id) || allies(this, o)) continue;
       const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z;
       const d = Math.hypot(dx, dz);
       if (d > m.range * this.def.scale + o.radius) continue;
@@ -302,6 +405,7 @@ export class Fighter {
 
   startSpecial(world) {
     this.energy -= SPECIAL_COST;
+    this.sprinting = false;
     this.setState('special');
     this.specialPhase = 0;
     this.specialDone = false;
@@ -330,7 +434,76 @@ export class Fighter {
     }
   }
 
+  // Tap dash: a quick roll with a moment of invulnerability, in the held direction (backwards if none).
+  startDodge(world) {
+    if (this.exhausted) { world.events.emit('dodgeFail', { fighter: this }); return false; }
+    const it = this.intent;
+    const len = Math.hypot(it.mx, it.mz);
+    const f = this.forward();
+    const dx = len > 0.1 ? it.mx / len : -f.x, dz = len > 0.1 ? it.mz / len : -f.z;
+    this.dodgeDir = { x: dx, z: dz };
+    this.sprinting = false;
+    this.spendStamina(STAMINA.dodge, world);
+    this.setState('dodge', DODGE.duration);
+    this.invuln = Math.max(this.invuln, DODGE.invuln);
+    world.effects.dust(this.pos.x, this.pos.z, 0.6);
+    world.events.emit('dodge', { fighter: this });
+    return true;
+  }
+
+  tickDodge(dt, world) {
+    const k = 1 - this.stateTime / this.stateDuration;
+    const sp = DODGE.speed * (0.35 + 0.65 * k);
+    this.vel.x = this.dodgeDir.x * sp; this.vel.z = this.dodgeDir.z * sp;
+    if (this.stateTime >= this.stateDuration) this.setState(this.intent.block ? 'block' : 'idle');
+  }
+
+  // Skills cost mana (the blue bar) and go on cooldown.
+  startSkill(idx, world) {
+    const id = this.skillIds[idx];
+    const sk = SKILLS[id];
+    if (!sk) return false;
+    if (this.cooldowns[idx] > 0 || this.energy < sk.cost) {
+      world.events.emit('skillFail', { fighter: this, skill: id, reason: this.cooldowns[idx] > 0 ? 'cooldown' : 'mana' });
+      return false;
+    }
+    this.energy -= sk.cost;
+    this.cooldowns[idx] = sk.cooldown;
+    this.skill = sk;
+    this.skillId = id;
+    this.skillIdx = idx;
+    this.sprinting = false;
+    this.setState('skill');
+    this.specialPhase = 0;
+    this.specialDone = false;
+    if (sk.type === 'bolt' || sk.type === 'wave' || sk.type === 'leap') {
+      const it = this.intent;
+      const moving = Math.hypot(it.mx, it.mz) > 0.1;
+      const dir = moving ? Math.atan2(it.mx, it.mz) : this.facing;
+      const target = this.findTarget(world, 14, 1.2, dir) || this.findTarget(world, 14, Math.PI, dir);
+      if (target) this.faceToward(target); else if (moving) this.facing = dir;
+    }
+    world.events.emit('skillStart', { fighter: this, skill: id, slot: idx });
+    return true;
+  }
+
+  tickSkill(dt, world) {
+    const sk = this.skill;
+    const t = this.stateTime;
+    if (t < sk.startup) {
+      this.specialPhase = t / sk.startup;
+      return;
+    }
+    if (!this.specialDone) {
+      this.specialDone = true;
+      executeSkill(this, this.skillId, world);
+    }
+    this.specialPhase = 1 + Math.min(1, (t - sk.startup) / sk.recovery);
+    if (t >= sk.startup + sk.recovery) this.setState('idle');
+  }
+
   tickBlock(dt, world) {
+    if (this.buffer?.action === 'dash') { this.consumeBuffer(); if (this.startDodge(world)) return; }
     if (!this.intent.block) { this.setState('idle'); return; }
     const threat = this.findTarget(world, 5, Math.PI);
     if (threat) {
@@ -342,7 +515,8 @@ export class Fighter {
 
   // Returns 'hit', 'block' or 'ignored'.
   receiveHit(src, h, world) {
-    if (!this.alive || this.invuln > 0) return 'ignored';
+    if (!this.alive || this.invuln > 0 || this.vanish > 0) return 'ignored';
+    if (allies(src, this)) return 'ignored';
     if (this.state === 'knockdown' || this.state === 'getup') return 'ignored';
     const blocking = (this.state === 'block' || this.state === 'blockstun') && !h.unblockable;
     const toSrcX = -h.dx, toSrcZ = -h.dz;
@@ -353,7 +527,8 @@ export class Fighter {
 
     if (blocking && facingSrc) {
       const chip = h.damage * 0.12;
-      this.guard -= h.damage * 2.6;
+      this.guard -= h.damage * 2.6 * (this.exhausted ? 1.5 : 1);
+      this.spendStamina(h.damage * STAMINA.blockPerDamage, world);
       this.guardRegenDelay = 0.8;
       this.vel.x = h.dx * h.knock * 0.45; this.vel.z = h.dz * h.knock * 0.45;
       this.applyDamage(chip, src, world, true);
@@ -374,12 +549,25 @@ export class Fighter {
     }
 
     let dmg = h.damage;
-    const armored = this.armor > 0;
-    if (armored) dmg *= 0.6;
+    const armored = this.armor > 0 || this.shield > 0;
+    if (this.armor > 0) dmg *= 0.6;
+    if (this.shield > 0) {
+      // the barrier soaks damage first and stops the flinch while it holds
+      const soak = Math.min(this.shield, dmg);
+      this.shield -= soak;
+      dmg -= soak;
+      world.effects.sparks(this.pos.x - h.dx * 0.5, 1.2, this.pos.z - h.dz * 0.5, this.model.shell.material.color.getHex(), 8, 4);
+      if (this.shield <= 0) { this.shield = 0; this.shieldTime = 0; world.events.emit('shieldBreak', { fighter: this }); }
+    }
     this.applyDamage(dmg, src, world, false);
     if (src && src !== this) {
       src.energy = Math.min(ENERGY_MAX, src.energy + dmg * 1.1);
       src.stats.damage += dmg;
+      const steal = (src.lifesteal > 0 ? 0.5 : 0) + (h.drain || 0);
+      if (steal > 0 && src.alive && dmg > 0) {
+        src.hp = Math.min(src.maxHp, src.hp + dmg * steal);
+        world.effects.sparks(src.pos.x, 1.3, src.pos.z, 0xff4a5a, 6, 2);
+      }
     }
     this.energy = Math.min(ENERGY_MAX, this.energy + dmg * 0.7);
     this.hitstop = h.heavy ? 0.09 : 0.05;
@@ -388,13 +576,20 @@ export class Fighter {
     world.events.emit('hit', { fighter: this, by: src, damage: dmg, heavy: !!h.heavy, kind: h.kind, move: h.move, ko: !this.alive });
     if (h.heavy) world.shake(h.knockdown ? 0.35 : 0.22);
 
-    if (h.poison) { this.poison = Math.max(this.poison, h.poison); this.poisonBy = src; }
+    if (h.poison) { this.poison = Math.max(this.poison, h.poison); this.poisonBy = src; this.poisonColor = h.poisonColor || 0x9dff3a; }
+    if (h.slow) this.slow = Math.max(this.slow, h.slow);
     if (!this.alive) {
       this.vel.x = h.dx * (h.knock + 4); this.vel.z = h.dz * (h.knock + 4); this.vel.y = 5; this.grounded = false;
       return 'hit';
     }
     if (armored && !h.freeze && !h.pull) {
       this.vel.x += h.dx * h.knock * 0.2; this.vel.z += h.dz * h.knock * 0.2;
+      return 'hit';
+    }
+    if (h.stun && !h.knockdown) {
+      this.vel.x = h.dx * h.knock; this.vel.z = h.dz * h.knock;
+      this.setState('hitstun', h.stun);
+      world.effects.sparks(this.pos.x, 1.7, this.pos.z, 0xfff27a, 10, 3);
       return 'hit';
     }
     if (h.freeze) {
@@ -429,7 +624,9 @@ export class Fighter {
       this.alive = false;
       this.model.ice.visible = false;
       this.model.aura.visible = false;
-      this.armor = 0; this.poison = 0;
+      this.armor = 0; this.poison = 0; this.shield = 0; this.power = 0; this.lifesteal = 0; this.vanish = 0; this.haste = 0; this.slow = 0; this.healLeft = 0;
+      this.sprinting = false;
+      this.updateBuffVisuals();
       const killer = src && src !== this ? src : (this.lastAttacker && world.time - this.lastHitTime < 6 ? this.lastAttacker : null);
       if (killer) killer.stats.kos++;
       this.facing = src ? angleTo(this.pos.x, this.pos.z, src.pos.x, src.pos.z) : this.facing;
@@ -442,7 +639,7 @@ export class Fighter {
   integrate(dt, world) {
     const free = this.state === 'idle' && this.alive;
     const it = this.intent;
-    const speed = BASE_SPEED * this.def.speed;
+    const speed = BASE_SPEED * this.def.speed * this.speedMult();
     if (free) {
       const tx = it.mx * speed, tz = it.mz * speed;
       const a = Math.min(1, dt * (this.grounded ? 16 : 3.5));
@@ -453,6 +650,8 @@ export class Fighter {
       const a = Math.min(1, dt * 12);
       this.vel.x += (tx - this.vel.x) * a;
       this.vel.z += (tz - this.vel.z) * a;
+    } else if (this.state === 'dodge') {
+      // velocity is set by tickDodge
     } else if (this.state !== 'attack' || this.stateTime > this.move.startup + this.move.active) {
       if (this.grounded) {
         const fr = Math.exp(-dt * (this.state === 'frozen' ? 2.5 : 7));
@@ -483,8 +682,14 @@ export class Fighter {
 
     // locomotion animation params
     const hs = Math.hypot(this.vel.x, this.vel.z);
-    this.moveAmount += ((free && this.grounded ? Math.min(1, hs / speed) : 0) - this.moveAmount) * Math.min(1, dt * 10);
+    const base = BASE_SPEED * this.def.speed;
+    this.moveAmount += ((free && this.grounded ? Math.min(1, hs / base) : 0) - this.moveAmount) * Math.min(1, dt * 10);
+    if (this.sprinting && this.grounded && Math.random() < dt * 8) world.effects.dust(this.pos.x, this.pos.z, 0.35);
     this.runPhase += dt * (4 + hs * 1.7);
+  }
+
+  speedMult() {
+    return (this.sprinting ? STAMINA.sprintSpeed : 1) * (this.haste > 0 ? 1.35 : 1) * (this.slow > 0 ? 0.6 : 1) * (this.exhausted ? STAMINA.exhaustedSpeed : 1);
   }
 
   syncVisual(dt) {
@@ -500,7 +705,7 @@ export class Fighter {
     m.body.position.y = 0.16 * fall;
     if (this.state === 'frozen' || this.hitstop > 0 && this.state !== 'attack') { if (dt === 0) return; }
     if (this.state !== 'frozen' && dt > 0) {
-      const sharp = this.state === 'attack' || this.state === 'hitstun' || this.state === 'special';
+      const sharp = this.state === 'attack' || this.state === 'hitstun' || this.state === 'special' || this.state === 'skill' || this.state === 'dodge';
       applyPose(m, computePose(this), dt, sharp);
     }
     // ring fades out when KO'd
